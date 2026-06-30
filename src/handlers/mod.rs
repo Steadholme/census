@@ -34,9 +34,26 @@ pub fn esc(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-/// Render the shared app-bar: shield + HOLDFAST wordmark + a page nav on the left; the signed-in
-/// email + a Logout link to the gateway on the right.
+/// Render the shared app-bar: shield + HOLDFAST wordmark + a page nav on the left; on the right an
+/// "All apps" pill back to the apex portal, the signed-in user chip (avatar initial + email), and a
+/// Logout link to the gateway. A `—`/empty email (unauthenticated or error pages) drops the chip.
 pub fn topbar(page_title: &str, email: &str) -> String {
+    // The user chip only renders for a known gateway identity; public/error chrome keeps the
+    // "All apps" pill + logout but shows no avatar.
+    let chip = if email.is_empty() || email == "—" {
+        String::new()
+    } else {
+        let initial = email
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_else(|| "H".to_string());
+        format!(
+            r#"<span class="userchip"><span class="userchip__avatar" aria-hidden="true">{initial}</span><span class="user-email">{email}</span></span>"#,
+            initial = esc(&initial),
+            email = esc(email),
+        )
+    };
     format!(
         r#"<header class="topbar">
   <div class="topbar__inner">
@@ -50,14 +67,15 @@ pub fn topbar(page_title: &str, email: &str) -> String {
     </nav>
     <div class="topbar__right">
       <span class="topbar__title">{title}</span>
-      <span class="user-email">{email}</span>
+      <a class="allapps" href="https://w33d.xyz" title="All apps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>All apps</a>
+      {chip}
       <a class="btn btn-ghost btn-sm" href="{logout}">Log out</a>
     </div>
   </div>
 </header>"#,
         shield = SHIELD_SVG,
         title = esc(page_title),
-        email = esc(email),
+        chip = chip,
         logout = LOGOUT_URL,
     )
 }
