@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Directory · Census · HOLDFAST</title>
+  <style>{{CSS}}</style>
+</head>
+<body class="page-reading">
+{{TOPBAR}}
+<main class="reader reader--wide">
+  <div class="reader__head">
+    <div>
+      <h1 class="reader__title">People</h1>
+      <p class="reader__sub">The HOLDFAST org directory — profiles &amp; groups over Keystone identities.</p>
+    </div>
+    <form class="searchbar" method="get" action="/">
+      <input type="search" name="q" value="{{QUERY}}" placeholder="Search name, title, email…" aria-label="Search the directory">
+      <button class="btn btn-primary" type="submit">Search</button>
+    </form>
+  </div>
+  <div class="directory">
+    <div class="directory__main">
+      <div class="directory__count">{{COUNT}}</div>
+      <div class="person-list">
+        {{ROWS}}
+      </div>
+    </div>
+    <aside class="directory__aside">
+      <div class="panel">
+        <div class="panel__head"><h2>Groups</h2><a class="panel__link" href="/groups">Manage</a></div>
+        <ul class="grouplist">
+          {{GROUPS}}
+        </ul>
+      </div>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

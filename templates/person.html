@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{{NAME_TEXT}} · Census</title>
+  <style>{{CSS}}</style>
+</head>
+<body class="page-reading">
+{{TOPBAR}}
+<main class="reader">
+  <a class="back-link" href="/">&larr; All people</a>
+  <header class="person__head">
+    {{AVATAR}}
+    <div class="person__id">
+      <h1 class="person__name">{{NAME}}</h1>
+      {{TITLE_LINE}}
+      {{EMAIL_LINE}}
+      <div class="person__updated">Profile updated {{UPDATED}}</div>
+    </div>
+  </header>
+
+  <section class="person__section">
+    <h2 class="person__label">Bio</h2>
+    {{BIO}}
+  </section>
+
+  <section class="person__section">
+    <h2 class="person__label">Groups</h2>
+    <ul class="chips">
+      {{GROUPS}}
+    </ul>
+  </section>
+
+  {{EDIT}}
+</main>
+</body>
+</html>
