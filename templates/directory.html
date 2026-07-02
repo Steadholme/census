@@ -15,8 +15,14 @@
       <h1 class="reader__title">People</h1>
       <p class="reader__sub">The HOLDFAST org directory — profiles &amp; groups over Keystone identities.</p>
     </div>
-    <form class="searchbar" method="get" action="/">
-      <input type="search" name="q" value="{{QUERY}}" placeholder="Search name, title, email…" aria-label="Search the directory">
+    <form class="searchbar searchbar--filters" method="get" action="/">
+      <input type="search" name="q" value="{{QUERY}}" placeholder="Search name, department, group…" aria-label="Search the directory">
+      <select name="dept" aria-label="Filter by department">
+        {{DEPARTMENT_OPTIONS}}
+      </select>
+      <select name="group" aria-label="Filter by group">
+        {{GROUP_OPTIONS}}
+      </select>
       <button class="btn btn-primary" type="submit">Search</button>
     </form>
   </div>
@@ -33,6 +39,12 @@
         <ul class="grouplist">
           {{GROUPS}}
         </ul>
+      </div>
+      <div class="panel org-panel">
+        <div class="panel__head"><h2>Org chart</h2></div>
+        <div class="org-chart">
+          {{ORG_CHART}}
+        </div>
       </div>
     </aside>
   </div>

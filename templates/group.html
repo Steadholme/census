@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{{NAME}} · Groups · Census</title>
+  <style>{{CSS}}</style>
+</head>
+<body class="page-console">
+{{TOPBAR}}
+<main class="console">
+  <a class="back-link" href="/groups">&larr; All groups</a>
+  <div class="console__head">
+    <h1>{{NAME}}</h1>
+    <p class="sub">Created {{CREATED}} · {{DIRECT_COUNT}} direct members · {{RESOLVED_COUNT}} resolved members</p>
+  </div>
+
+  <section class="card">
+    <div class="card__body">
+      {{DESCRIPTION}}
+    </div>
+  </section>
+
+  <div class="group-detail-grid">
+    <section class="card">
+      <div class="card__body">
+        <h2 class="edit-card__head">Direct members</h2>
+        <ul class="members">{{DIRECT_MEMBERS}}</ul>
+        <form class="member-add" method="post" action="/api/groups/{{GROUP_ID}}/members">
+          <input type="hidden" name="csrf_token" value="{{CSRF}}">
+          <input type="hidden" name="action" value="add">
+          <select name="sub" required aria-label="Person to add">
+            <option value="" disabled selected>Add a person…</option>
+            {{PERSON_OPTIONS}}
+          </select>
+          <input type="text" name="role" maxlength="160" placeholder="role (member)" aria-label="Role">
+          <button class="btn btn-secondary btn-sm" type="submit">Add</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__body">
+        <h2 class="edit-card__head">Child groups</h2>
+        <ul class="members">{{CHILD_GROUPS}}</ul>
+        <form class="member-add" method="post" action="/api/groups/{{GROUP_ID}}/children">
+          <input type="hidden" name="csrf_token" value="{{CSRF}}">
+          <input type="hidden" name="action" value="add">
+          <select name="child_group_id" required aria-label="Child group to add">
+            <option value="" disabled selected>Add a child group…</option>
+            {{CHILD_GROUP_OPTIONS}}
+          </select>
+          <button class="btn btn-secondary btn-sm" type="submit">Add child</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div class="group-detail-grid">
+    <section class="card">
+      <div class="card__body">
+        <h2 class="edit-card__head">Resolved members</h2>
+        <ul class="members">{{RESOLVED_MEMBERS}}</ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__body">
+        <h2 class="edit-card__head">Parent groups</h2>
+        <ul class="members">{{PARENT_GROUPS}}</ul>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

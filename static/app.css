@@ -237,6 +237,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 /* ---- Search bar --------------------------------------------------------- */
 .searchbar { display: flex; gap: var(--sp-2); flex: none; }
 .searchbar input[type="search"] { width: 280px; max-width: 50vw; }
+.searchbar--filters { flex-wrap: wrap; justify-content: flex-end; }
+.searchbar--filters select { width: auto; min-width: 150px; }
 
 /* ---- Directory layout --------------------------------------------------- */
 .directory { display: grid; grid-template-columns: 1fr 300px; gap: var(--sp-8); align-items: start; }
@@ -257,6 +259,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 .row__name { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
 .row__title { font-size: var(--fs-sm); color: var(--accent-ink); font-weight: 500; }
 .row__email { font-size: var(--fs-sm); color: var(--text-subtle); margin-top: 2px; }
+.row__meta { font-size: var(--fs-sm); color: var(--text-muted); margin-top: 2px; }
 .row__bio { margin: var(--sp-2) 0 0; color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.55; }
 
 /* ---- Avatar (rounded square, matching the app-bar user chip) ------------- */
@@ -284,6 +287,19 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 .grouplist__item a:hover { color: var(--accent); }
 .grouplist__count { font-size: var(--fs-xs); font-weight: 600; color: var(--accent-2); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: var(--radius-pill); padding: 1px 9px; }
 .grouplist__empty { padding: var(--sp-3) var(--sp-5); color: var(--text-subtle); font-size: var(--fs-sm); }
+.org-panel { margin-top: var(--sp-5); }
+.org-chart { padding: var(--sp-3) var(--sp-4) var(--sp-4); max-height: 520px; overflow: auto; }
+.org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
+.org-tree ul { margin-left: var(--sp-4); padding-left: var(--sp-4); border-left: 1px solid var(--border); }
+.org-node { margin: var(--sp-2) 0; }
+.org-card {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface);
+}
+.org-card a { font-weight: 600; color: var(--text); }
+.org-card a:hover { color: var(--accent); }
+.org-card__meta { font-size: var(--fs-xs); color: var(--text-subtle); line-height: 1.4; }
 
 /* ---- Person page -------------------------------------------------------- */
 .person__head { display: flex; gap: var(--sp-5); align-items: center; margin-bottom: var(--sp-8); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border); }
@@ -293,6 +309,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 .person__updated { margin-top: var(--sp-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-subtle); }
 .person__section { margin-bottom: var(--sp-8); }
 .person__label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--text-subtle); margin: 0 0 var(--sp-3); }
+.details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); margin: 0; }
+.detail { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); min-width: 0; }
+.detail dt { margin: 0 0 2px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-subtle); }
+.detail dd { margin: 0; color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
 
 /* ---- Prose (rendered bio) ----------------------------------------------- */
 .prose { font-size: var(--fs-md); line-height: 1.7; color: var(--ink); }
@@ -324,11 +344,15 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 /* ---- Group cards -------------------------------------------------------- */
 .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--sp-5); }
+.group-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-5); align-items: start; }
 .group-card { margin: 0; }
 .group__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
 .group__name { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.group__name a { color: var(--text); }
+.group__name a:hover { color: var(--accent); }
 .group__meta { font-size: var(--fs-xs); color: var(--text-subtle); white-space: nowrap; }
 .group__desc { margin: var(--sp-2) 0 var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.55; }
+.group__subhead { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-subtle); }
 .members { list-style: none; margin: var(--sp-3) 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .member { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--border); }
 .member:first-child { border-top: 0; }
@@ -339,6 +363,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 /* ---- Forms (Census editor + inline add rows) ---------------------------- */
 .editor__body { min-height: 200px; resize: vertical; font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.6; }
 .editor__actions { display: flex; align-items: center; gap: var(--sp-3); }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
 .member-add { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; margin-top: var(--sp-3); }
 .member-add select { flex: 1 1 160px; width: auto; }
 .member-add input[type="text"] { flex: 1 1 140px; width: auto; }
@@ -363,6 +388,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   .directory__aside { position: static; }
   .reader__head { flex-direction: column; align-items: stretch; }
   .searchbar input[type="search"] { max-width: none; width: 100%; }
+  .searchbar--filters select { width: 100%; }
+  .details-grid, .field-grid, .group-detail-grid { grid-template-columns: 1fr; }
   .topnav { display: none; }
   .topbar__title { display: none; }
 }

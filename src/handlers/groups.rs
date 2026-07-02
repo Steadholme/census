@@ -19,10 +19,11 @@ use crate::config::{MAX_NAME_CHARS, MAX_TITLE_CHARS};
 use crate::error::AppError;
 use crate::handlers::people::{assemble_people, viewer_identity};
 use crate::handlers::{esc, fmt_date, html_with_cookie, redirect, topbar, APP_CSS};
-use crate::store::{Group, Membership};
+use crate::store::{recursive_members_of, would_create_group_cycle, Group, GroupChild, Membership};
 use crate::{now_nanos, now_secs, AppState};
 
 const GROUPS_HTML: &str = include_str!("../../templates/groups.html");
+const GROUP_HTML: &str = include_str!("../../templates/group.html");
 
 /// Create-group form body.
 #[derive(Debug, Deserialize)]
@@ -42,6 +43,17 @@ pub struct MemberForm {
     pub sub: String,
     #[serde(default)]
     pub role: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub csrf_token: String,
+}
+
+/// Add/remove-child-group form body.
+#[derive(Debug, Deserialize)]
+pub struct ChildGroupForm {
+    #[serde(default)]
+    pub child_group_id: String,
     #[serde(default)]
     pub action: String,
     #[serde(default)]
@@ -73,33 +85,13 @@ pub async fn groups_page(State(state): State<AppState>, headers: HeaderMap) -> R
     let mut cards = String::new();
     for g in &groups {
         let members = state.store.members_of(&g.id).await;
-        let mut member_html = String::new();
-        for m in &members {
-            let name = label_by_sub
-                .get(&m.sub)
-                .cloned()
-                .unwrap_or_else(|| m.sub.clone());
-            member_html.push_str(&format!(
-                r#"<li class="member">
-  <a class="member__name" href="/u/{sub}">{name}</a>
-  <span class="chip-role">{role}</span>
-  <form class="inline-form" method="post" action="/api/groups/{gid}/members">
-    <input type="hidden" name="csrf_token" value="{csrf}">
-    <input type="hidden" name="action" value="remove">
-    <input type="hidden" name="sub" value="{sub}">
-    <button class="btn btn-danger btn-xs" type="submit" title="Remove member">Remove</button>
-  </form>
-</li>"#,
-                sub = esc(&m.sub),
-                name = esc(&name),
-                role = esc(&m.role),
-                gid = esc(&g.id),
-                csrf = esc(&csrf),
-            ));
-        }
-        if member_html.is_empty() {
-            member_html.push_str(r#"<li class="chips__empty">No members yet</li>"#);
-        }
+        let member_html = render_member_list(&members, &label_by_sub, &g.id, &csrf, true);
+        let child_edges = state.store.child_groups_of(&g.id).await;
+        let child_html = render_child_group_list(&child_edges, &groups, &g.id, &csrf, true);
+        let child_options = render_child_group_options(&groups, &g.id);
+        let resolved_count = recursive_members_of(state.store.as_ref(), &g.id)
+            .await
+            .len();
         let desc = if g.description.trim().is_empty() {
             String::new()
         } else {
@@ -109,10 +101,11 @@ pub async fn groups_page(State(state): State<AppState>, headers: HeaderMap) -> R
             r#"<section class="card group-card">
   <div class="card__body">
     <div class="group__head">
-      <h2 class="group__name">{name}</h2>
-      <span class="group__meta">{count} {member_word} · created {created}</span>
+      <h2 class="group__name"><a href="/groups/{gid}">{name}</a></h2>
+      <span class="group__meta">{count} direct · {resolved} resolved · {child_count} {child_word} · created {created}</span>
     </div>
     {desc}
+    <h3 class="group__subhead">Direct members</h3>
     <ul class="members">{members}</ul>
     <form class="member-add" method="post" action="/api/groups/{gid}/members">
       <input type="hidden" name="csrf_token" value="{csrf}">
@@ -124,17 +117,32 @@ pub async fn groups_page(State(state): State<AppState>, headers: HeaderMap) -> R
       <input type="text" name="role" maxlength="160" placeholder="role (member)" aria-label="Role">
       <button class="btn btn-secondary btn-sm" type="submit">Add</button>
     </form>
+    <h3 class="group__subhead">Child groups</h3>
+    <ul class="members">{children}</ul>
+    <form class="member-add" method="post" action="/api/groups/{gid}/children">
+      <input type="hidden" name="csrf_token" value="{csrf}">
+      <input type="hidden" name="action" value="add">
+      <select name="child_group_id" required aria-label="Child group to add">
+        <option value="" disabled selected>Add a child group…</option>
+        {child_options}
+      </select>
+      <button class="btn btn-secondary btn-sm" type="submit">Add child</button>
+    </form>
   </div>
 </section>"#,
+            gid = esc(&g.id),
             name = esc(&g.name),
             count = members.len(),
-            member_word = plural(members.len(), "member", "members"),
+            resolved = resolved_count,
+            child_count = child_edges.len(),
+            child_word = plural(child_edges.len(), "child group", "child groups"),
             created = esc(&fmt_date(g.created_at)),
             desc = desc,
             members = member_html,
-            gid = esc(&g.id),
+            children = child_html,
             csrf = esc(&csrf),
             options = options,
+            child_options = child_options,
         ));
     }
     if cards.is_empty() {
@@ -151,6 +159,80 @@ pub async fn groups_page(State(state): State<AppState>, headers: HeaderMap) -> R
     html_with_cookie(body, set_cookie)
 }
 
+/// `GET /groups/{id}` — detail page for one group, including nested groups and resolved members.
+pub async fn group_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let email = auth::display_email(&headers);
+    let viewer = viewer_identity(&headers);
+    let (csrf, set_cookie) = auth::ensure_csrf(&headers);
+    let group = state
+        .store
+        .get_group(&id)
+        .await
+        .ok_or_else(|| AppError::NotFound("no such group".to_string()))?;
+
+    let people = assemble_people(&state, viewer.as_ref()).await;
+    let label_by_sub: HashMap<String, String> = people
+        .iter()
+        .map(|p| (p.identity.sub.clone(), p.label()))
+        .collect();
+    let mut people_options = String::new();
+    for p in &people {
+        people_options.push_str(&format!(
+            r#"<option value="{sub}">{label}</option>"#,
+            sub = esc(&p.identity.sub),
+            label = esc(&p.label()),
+        ));
+    }
+
+    let groups = state.store.list_groups().await;
+    let members = state.store.members_of(&group.id).await;
+    let child_edges = state.store.child_groups_of(&group.id).await;
+    let parent_edges = state.store.parent_groups_of(&group.id).await;
+    let resolved_members = recursive_members_of(state.store.as_ref(), &group.id).await;
+
+    let desc = if group.description.trim().is_empty() {
+        r#"<p class="muted">No description.</p>"#.to_string()
+    } else {
+        format!(r#"<p class="group__desc">{}</p>"#, esc(&group.description))
+    };
+    let body = GROUP_HTML
+        .replace("{{CSS}}", APP_CSS)
+        .replace("{{TOPBAR}}", &topbar("Group", &email))
+        .replace("{{CSRF}}", &esc(&csrf))
+        .replace("{{GROUP_ID}}", &esc(&group.id))
+        .replace("{{NAME}}", &esc(&group.name))
+        .replace("{{DESCRIPTION}}", &desc)
+        .replace("{{CREATED}}", &esc(&fmt_date(group.created_at)))
+        .replace("{{DIRECT_COUNT}}", &members.len().to_string())
+        .replace("{{RESOLVED_COUNT}}", &resolved_members.len().to_string())
+        .replace(
+            "{{DIRECT_MEMBERS}}",
+            &render_member_list(&members, &label_by_sub, &group.id, &csrf, true),
+        )
+        .replace(
+            "{{RESOLVED_MEMBERS}}",
+            &render_member_list(&resolved_members, &label_by_sub, &group.id, &csrf, false),
+        )
+        .replace(
+            "{{CHILD_GROUPS}}",
+            &render_child_group_list(&child_edges, &groups, &group.id, &csrf, true),
+        )
+        .replace(
+            "{{PARENT_GROUPS}}",
+            &render_parent_group_list(&parent_edges, &groups),
+        )
+        .replace("{{PERSON_OPTIONS}}", &people_options)
+        .replace(
+            "{{CHILD_GROUP_OPTIONS}}",
+            &render_child_group_options(&groups, &group.id),
+        );
+    Ok(html_with_cookie(body, set_cookie))
+}
+
 /// `POST /api/groups` — create a group (unique name). CSRF-checked; emits `census.group.change`.
 pub async fn create_group(
     State(state): State<AppState>,
@@ -162,7 +244,9 @@ pub async fn create_group(
 
     let name = cap(form.name.trim(), MAX_NAME_CHARS);
     if name.is_empty() {
-        return Err(AppError::InvalidRequest("group name is required".to_string()));
+        return Err(AppError::InvalidRequest(
+            "group name is required".to_string(),
+        ));
     }
     let description = cap(form.description.trim(), 2048);
     let group = Group {
@@ -205,7 +289,9 @@ pub async fn members(
 
     let target_sub = form.sub.trim().to_string();
     if target_sub.is_empty() {
-        return Err(AppError::InvalidRequest("member subject is required".to_string()));
+        return Err(AppError::InvalidRequest(
+            "member subject is required".to_string(),
+        ));
     }
 
     let actor = actor_or_sub(actor_email, &actor_sub);
@@ -248,6 +334,204 @@ pub async fn members(
     }
 
     Ok(redirect("/groups"))
+}
+
+/// `POST /api/groups/{id}/children` — add or remove a nested group edge. CSRF-checked; emits
+/// `census.group.change`.
+pub async fn child_groups(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<ChildGroupForm>,
+) -> Result<Response, AppError> {
+    let (actor_sub, actor_email) = auth::require_viewer(&headers)?;
+    auth::verify_csrf(&headers, &form.csrf_token)?;
+
+    let parent = state
+        .store
+        .get_group(&id)
+        .await
+        .ok_or_else(|| AppError::NotFound("no such group".to_string()))?;
+    let child_group_id = form.child_group_id.trim().to_string();
+    if child_group_id.is_empty() {
+        return Err(AppError::InvalidRequest(
+            "child group id is required".to_string(),
+        ));
+    }
+    let child = state
+        .store
+        .get_group(&child_group_id)
+        .await
+        .ok_or_else(|| AppError::NotFound("no such child group".to_string()))?;
+
+    let actor = actor_or_sub(actor_email, &actor_sub);
+    match form.action.trim() {
+        "remove" => {
+            state
+                .store
+                .remove_group_child(&parent.id, &child.id)
+                .await?;
+            tracing::info!(parent = %parent.id, child = %child.id, "child group removed");
+            state.audit.emit(AuditEvent::notice(
+                "census.group.change",
+                &actor,
+                &parent.id,
+                &format!("removed child group {} from {}", child.name, parent.name),
+            ));
+        }
+        _ => {
+            if would_create_group_cycle(state.store.as_ref(), &parent.id, &child.id).await {
+                return Err(AppError::InvalidRequest(
+                    "nested group cycle is not allowed".to_string(),
+                ));
+            }
+            let edge = GroupChild {
+                parent_group_id: parent.id.clone(),
+                child_group_id: child.id.clone(),
+                added_at: now_secs(),
+            };
+            state.store.add_group_child(&edge).await?;
+            tracing::info!(parent = %parent.id, child = %child.id, "child group added");
+            state.audit.emit(AuditEvent::notice(
+                "census.group.change",
+                &actor,
+                &parent.id,
+                &format!("added child group {} to {}", child.name, parent.name),
+            ));
+        }
+    }
+
+    Ok(redirect(&format!("/groups/{}", parent.id)))
+}
+
+fn render_member_list(
+    members: &[Membership],
+    label_by_sub: &HashMap<String, String>,
+    group_id: &str,
+    csrf: &str,
+    removable: bool,
+) -> String {
+    if members.is_empty() {
+        return r#"<li class="chips__empty">No members yet</li>"#.to_string();
+    }
+    let mut html = String::new();
+    for m in members {
+        let name = label_by_sub
+            .get(&m.sub)
+            .cloned()
+            .unwrap_or_else(|| m.sub.clone());
+        let remove_form = if removable {
+            format!(
+                r#"<form class="inline-form" method="post" action="/api/groups/{gid}/members">
+    <input type="hidden" name="csrf_token" value="{csrf}">
+    <input type="hidden" name="action" value="remove">
+    <input type="hidden" name="sub" value="{sub}">
+    <button class="btn btn-danger btn-xs" type="submit" title="Remove member">Remove</button>
+  </form>"#,
+                gid = esc(group_id),
+                csrf = esc(csrf),
+                sub = esc(&m.sub),
+            )
+        } else {
+            String::new()
+        };
+        html.push_str(&format!(
+            r#"<li class="member">
+  <a class="member__name" href="/u/{sub}">{name}</a>
+  <span class="chip-role">{role}</span>
+  {remove_form}
+</li>"#,
+            sub = esc(&m.sub),
+            name = esc(&name),
+            role = esc(&m.role),
+            remove_form = remove_form,
+        ));
+    }
+    html
+}
+
+fn render_child_group_list(
+    edges: &[GroupChild],
+    groups: &[Group],
+    parent_group_id: &str,
+    csrf: &str,
+    removable: bool,
+) -> String {
+    if edges.is_empty() {
+        return r#"<li class="chips__empty">No child groups</li>"#.to_string();
+    }
+    let mut html = String::new();
+    for edge in edges {
+        let name = group_name(groups, &edge.child_group_id);
+        let remove_form = if removable {
+            format!(
+                r#"<form class="inline-form" method="post" action="/api/groups/{gid}/children">
+    <input type="hidden" name="csrf_token" value="{csrf}">
+    <input type="hidden" name="action" value="remove">
+    <input type="hidden" name="child_group_id" value="{child}">
+    <button class="btn btn-danger btn-xs" type="submit" title="Remove child group">Remove</button>
+  </form>"#,
+                gid = esc(parent_group_id),
+                csrf = esc(csrf),
+                child = esc(&edge.child_group_id),
+            )
+        } else {
+            String::new()
+        };
+        html.push_str(&format!(
+            r#"<li class="member">
+  <a class="member__name" href="/groups/{id}">{name}</a>
+  <span class="chip-role">group</span>
+  {remove_form}
+</li>"#,
+            id = esc(&edge.child_group_id),
+            name = esc(&name),
+            remove_form = remove_form,
+        ));
+    }
+    html
+}
+
+fn render_parent_group_list(edges: &[GroupChild], groups: &[Group]) -> String {
+    if edges.is_empty() {
+        return r#"<li class="chips__empty">No parent groups</li>"#.to_string();
+    }
+    let mut html = String::new();
+    for edge in edges {
+        let name = group_name(groups, &edge.parent_group_id);
+        html.push_str(&format!(
+            r#"<li class="member">
+  <a class="member__name" href="/groups/{id}">{name}</a>
+  <span class="chip-role">parent</span>
+</li>"#,
+            id = esc(&edge.parent_group_id),
+            name = esc(&name),
+        ));
+    }
+    html
+}
+
+fn render_child_group_options(groups: &[Group], current_group_id: &str) -> String {
+    let mut html = String::new();
+    for group in groups {
+        if group.id == current_group_id {
+            continue;
+        }
+        html.push_str(&format!(
+            r#"<option value="{id}">{name}</option>"#,
+            id = esc(&group.id),
+            name = esc(&group.name),
+        ));
+    }
+    html
+}
+
+fn group_name(groups: &[Group], id: &str) -> String {
+    groups
+        .iter()
+        .find(|g| g.id == id)
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| id.to_string())
 }
 
 fn actor_or_sub(email: String, sub: &str) -> String {

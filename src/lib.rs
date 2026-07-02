@@ -19,8 +19,10 @@
 //! - `GET  /u/{sub}`                     a person page (profile + group memberships)
 //! - `POST /api/profile`                 edit MY OWN profile (sub from X-Auth-Subject), CSRF
 //! - `GET  /groups`                      groups directory + create / membership management
+//! - `GET  /groups/{id}`                  group detail + nested membership resolution
 //! - `POST /api/groups`                  create a group, CSRF
 //! - `POST /api/groups/{id}/members`     add / remove a member, CSRF
+//! - `POST /api/groups/{id}/children`    add / remove a child group, CSRF
 //! - `GET  /api/people`                  JSON people feed for other services
 
 pub mod audit;
@@ -60,10 +62,12 @@ pub fn app(state: AppState) -> Router {
         .route("/u/{sub}", get(handlers::people::person))
         .route("/api/profile", post(handlers::people::update_profile))
         .route("/groups", get(handlers::groups::groups_page))
+        .route("/groups/{id}", get(handlers::groups::group_detail))
         .route("/api/groups", post(handlers::groups::create_group))
+        .route("/api/groups/{id}/members", post(handlers::groups::members))
         .route(
-            "/api/groups/{id}/members",
-            post(handlers::groups::members),
+            "/api/groups/{id}/children",
+            post(handlers::groups::child_groups),
         )
         .route("/api/people", get(handlers::api::people_json))
         .with_state(state)
@@ -112,12 +116,17 @@ pub async fn build_state_from_env() -> Result<AppState, String> {
             Arc::new(pg)
         }
         "memory" => Arc::new(InMemoryStore::new()),
-        other => return Err(format!("unknown CENSUS_STORE={other} (use memory|postgres)")),
+        other => {
+            return Err(format!(
+                "unknown CENSUS_STORE={other} (use memory|postgres)"
+            ))
+        }
     };
 
     let directory: Arc<dyn Directory> = match env_nonempty("KEYSTONE_DATABASE_URL") {
         Some(dsn) => {
-            let pool = directory::lazy_pool(&dsn).map_err(|e| format!("KEYSTONE_DATABASE_URL: {e}"))?;
+            let pool =
+                directory::lazy_pool(&dsn).map_err(|e| format!("KEYSTONE_DATABASE_URL: {e}"))?;
             tracing::info!("federating Keystone identity directory (read-only)");
             Arc::new(PgDirectory::new(pool))
         }

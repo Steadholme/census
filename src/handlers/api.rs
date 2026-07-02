@@ -20,6 +20,11 @@ pub struct PersonDto {
     pub email: String,
     pub display_name: String,
     pub title: String,
+    pub department: String,
+    pub manager_sub: String,
+    pub phone: String,
+    pub location: String,
+    pub timezone: String,
 }
 
 /// The JSON feed envelope.
@@ -43,6 +48,11 @@ pub async fn people_json(
             email: p.identity.email,
             display_name: p.profile.display_name,
             title: p.profile.title,
+            department: p.profile.department,
+            manager_sub: p.profile.manager_sub,
+            phone: p.profile.phone,
+            location: p.profile.location,
+            timezone: p.profile.timezone,
         })
         .collect();
     Json(PeopleResponse {

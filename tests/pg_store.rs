@@ -14,8 +14,8 @@
 //! The `Store` trait is async: each method `.await`s sqlx natively (no `block_in_place`), so it
 //! runs on any Tokio scheduler — this test stays on `multi_thread` for parallel queries.
 
-use census::store::{Group, Membership, PgStore, Profile, Store, StoreError};
 use census::now_secs;
+use census::store::{Group, GroupChild, Membership, PgStore, Profile, Store, StoreError};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pg_store_full_integration() {
@@ -28,7 +28,9 @@ async fn pg_store_full_integration() {
     };
 
     // --- connect / migrate (idempotent: run twice) -------------------------
-    let pg = PgStore::connect(&url).await.expect("connect TEST_DATABASE_URL");
+    let pg = PgStore::connect(&url)
+        .await
+        .expect("connect TEST_DATABASE_URL");
     pg.migrate().await.expect("migrate");
     pg.migrate().await.expect("migrate is idempotent");
 
@@ -39,6 +41,11 @@ async fn pg_store_full_integration() {
         sub: "u_alice".to_string(),
         display_name: "Alice".to_string(),
         title: "Engineer".to_string(),
+        department: "Engineering".to_string(),
+        manager_sub: String::new(),
+        phone: "+1 555 0100".to_string(),
+        location: "New York".to_string(),
+        timezone: "America/New_York".to_string(),
         bio: "Builds things.".to_string(),
         avatar_url: "https://cdn.w33d.xyz/a.png".to_string(),
         updated_at: now,
@@ -54,6 +61,8 @@ async fn pg_store_full_integration() {
     let refetched = pg.get_profile("u_alice").await.expect("refetch");
     assert_eq!(refetched.display_name, "Alice A.");
     assert_eq!(refetched.title, "Staff Engineer");
+    assert_eq!(refetched.department, "Engineering");
+    assert_eq!(refetched.location, "New York");
     assert!(pg.list_profiles().await.iter().any(|p| p.sub == "u_alice"));
 
     // --- groups: create + unique-name conflict -----------------------------
@@ -74,8 +83,29 @@ async fn pg_store_full_integration() {
         matches!(pg.create_group(&dup).await, Err(StoreError::Conflict(_))),
         "duplicate group name rejected"
     );
-    assert_eq!(pg.get_group("grp_eng").await.expect("get group").name, "Engineering");
+    assert_eq!(
+        pg.get_group("grp_eng").await.expect("get group").name,
+        "Engineering"
+    );
     assert!(pg.list_groups().await.iter().any(|g| g.id == "grp_eng"));
+
+    let child_group = Group {
+        id: "grp_platform".to_string(),
+        name: "Platform".to_string(),
+        description: "Platform team".to_string(),
+        created_at: now,
+    };
+    pg.create_group(&child_group)
+        .await
+        .expect("create child group");
+    let edge = GroupChild {
+        parent_group_id: "grp_eng".to_string(),
+        child_group_id: "grp_platform".to_string(),
+        added_at: now,
+    };
+    pg.add_group_child(&edge).await.expect("add child group");
+    assert_eq!(pg.child_groups_of("grp_eng").await.len(), 1);
+    assert_eq!(pg.parent_groups_of("grp_platform").await.len(), 1);
 
     // --- memberships: add (idempotent re-role), list both ways, remove -----
     let m = Membership {
@@ -100,12 +130,19 @@ async fn pg_store_full_integration() {
     assert_eq!(groups_of.len(), 1);
     assert_eq!(groups_of[0].group_id, "grp_eng");
 
-    pg.remove_member("grp_eng", "u_alice").await.expect("remove member");
+    pg.remove_member("grp_eng", "u_alice")
+        .await
+        .expect("remove member");
     assert!(pg.members_of("grp_eng").await.is_empty(), "member removed");
     assert!(pg.groups_of("u_alice").await.is_empty());
+    pg.remove_group_child("grp_eng", "grp_platform")
+        .await
+        .expect("remove child group");
+    assert!(pg.child_groups_of("grp_eng").await.is_empty());
 
     println!(
         "PG STORE INTEGRATION OK: migrate (idempotent) + profile upsert/get/list + group \
-         create/conflict/get/list + membership add/re-role/list/remove against real Postgres"
+         create/conflict/get/list + nested group add/list/remove + membership add/re-role/list/remove \
+         against real Postgres"
     );
 }

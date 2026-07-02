@@ -62,7 +62,10 @@ async fn directory_and_profile_flow() {
         .get(header::SET_COOKIE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert!(set_cookie.contains("__Host-csrf="), "self page mints CSRF cookie");
+    assert!(
+        set_cookie.contains("__Host-csrf="),
+        "self page mints CSRF cookie"
+    );
     let html = body_of(resp).await;
     assert!(html.contains("Edit your profile"), "owner sees edit form");
 
@@ -73,8 +76,15 @@ async fn directory_and_profile_flow() {
 
     // --- POST /api/profile with bad CSRF -> 401 ---------------------------
     let body = form(&[("display_name", "Nope"), ("csrf_token", "WRONG")]);
-    let (status, _) =
-        call(&state, post_csrf("/api/profile", &body, Some(("u_alice", "alice@holdfast.local")))).await;
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            "/api/profile",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "CSRF mismatch -> 401");
 
     // --- edit my own profile (bio markdown + a javascript: avatar) --------
@@ -82,12 +92,21 @@ async fn directory_and_profile_flow() {
     let body = form(&[
         ("display_name", "Alice Anderson"),
         ("title", "Platform Engineer"),
+        ("department", "Engineering"),
+        ("manager_sub", "u_bob"),
+        ("phone", "+1 555 0100"),
+        ("location", "Berlin"),
+        ("timezone", "Europe/Berlin"),
         ("avatar_url", "javascript:alert(3)"),
         ("bio", bio),
         ("csrf_token", CSRF),
     ]);
     let resp = app(state.clone())
-        .oneshot(post_csrf("/api/profile", &body, Some(("u_alice", "alice@holdfast.local"))))
+        .oneshot(post_csrf(
+            "/api/profile",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
@@ -104,14 +123,43 @@ async fn directory_and_profile_flow() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Alice Anderson"), "display name updated");
     assert!(body.contains("Platform Engineer"), "title shown");
-    assert!(body.contains("<strong>there</strong>"), "bio markdown rendered");
+    assert!(body.contains("Engineering"), "department shown");
+    assert!(body.contains("+1 555 0100"), "phone shown");
+    assert!(body.contains("Berlin"), "location shown");
+    assert!(body.contains("Europe/Berlin"), "timezone shown");
+    assert!(body.contains("bob@holdfast.local"), "manager shown");
+    assert!(
+        body.contains("<strong>there</strong>"),
+        "bio markdown rendered"
+    );
     assert!(!body.contains("<script>alert(1)"), "raw script escaped");
-    assert!(!body.contains("javascript:alert"), "js: link + avatar neutralized");
+    assert!(
+        !body.contains("javascript:alert"),
+        "js: link + avatar neutralized"
+    );
 
     // --- directory now shows the display name + title ---------------------
     let (_, body) = call(&state, get("/")).await;
     assert!(body.contains("Alice Anderson"));
     assert!(body.contains("Platform Engineer"));
+    assert!(body.contains("Engineering"));
+
+    let (_, body) = call(&state, get("/?dept=Engineering")).await;
+    assert!(
+        body.contains("Alice Anderson"),
+        "department filter includes Alice"
+    );
+    assert!(
+        !body.contains("bob@holdfast.local"),
+        "department filter excludes Bob"
+    );
+
+    let (_, bob) = call(&state, get("/u/u_bob")).await;
+    assert!(bob.contains("Direct reports"));
+    assert!(
+        bob.contains("Alice Anderson"),
+        "Bob sees Alice as direct report"
+    );
 
     // --- JSON people feed --------------------------------------------------
     let (status, body) = call(&state, get("/api/people")).await;
@@ -126,6 +174,11 @@ async fn directory_and_profile_flow() {
     assert_eq!(alice["display_name"], "Alice Anderson");
     assert_eq!(alice["email"], "alice@holdfast.local");
     assert_eq!(alice["title"], "Platform Engineer");
+    assert_eq!(alice["department"], "Engineering");
+    assert_eq!(alice["manager_sub"], "u_bob");
+    assert_eq!(alice["phone"], "+1 555 0100");
+    assert_eq!(alice["location"], "Berlin");
+    assert_eq!(alice["timezone"], "Europe/Berlin");
 }
 
 #[tokio::test]
@@ -139,8 +192,15 @@ async fn groups_and_membership_flow() {
 
     // --- create a group: bad CSRF -> 401 ----------------------------------
     let body = form(&[("name", "Engineering"), ("csrf_token", "WRONG")]);
-    let (status, _) =
-        call(&state, post_csrf("/api/groups", &body, Some(("u_alice", "alice@holdfast.local")))).await;
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            "/api/groups",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // --- create a group: success ------------------------------------------
@@ -149,23 +209,73 @@ async fn groups_and_membership_flow() {
         ("description", "Builds the estate"),
         ("csrf_token", CSRF),
     ]);
-    let (status, _) =
-        call(&state, post_csrf("/api/groups", &body, Some(("u_alice", "alice@holdfast.local")))).await;
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            "/api/groups",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
 
     // --- duplicate name -> 409 --------------------------------------------
     let body = form(&[("name", "engineering"), ("csrf_token", CSRF)]);
-    let (status, _) =
-        call(&state, post_csrf("/api/groups", &body, Some(("u_alice", "alice@holdfast.local")))).await;
-    assert_eq!(status, StatusCode::CONFLICT, "case-insensitive name clash rejected");
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            "/api/groups",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "case-insensitive name clash rejected"
+    );
 
-    // Discover the group id from the groups page (grp_… link in the member forms).
-    let (_, page) = call(&state, get_auth("/groups", "u_alice", "alice@holdfast.local")).await;
+    // Discover the Engineering group id from the groups page.
+    let (_, page) = call(
+        &state,
+        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+    )
+    .await;
     assert!(page.contains("Engineering"));
     assert!(page.contains("Builds the estate"));
-    let gid = extract_group_id(&page).expect("group id on page");
+    let eng_id = extract_group_id(&page).expect("group id on page");
 
-    // --- add a member ------------------------------------------------------
+    // --- create a child group ----------------------------------------------
+    let body = form(&[
+        ("name", "Platform"),
+        ("description", "Runtime platform"),
+        ("csrf_token", CSRF),
+    ]);
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            "/api/groups",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, page) = call(
+        &state,
+        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+    )
+    .await;
+    let ids = extract_group_ids(&page);
+    let platform_id = ids
+        .iter()
+        .find(|id| *id != &eng_id)
+        .expect("platform group id")
+        .clone();
+
+    // --- add a member to the child group -----------------------------------
     let body = form(&[
         ("action", "add"),
         ("sub", "u_bob"),
@@ -175,7 +285,7 @@ async fn groups_and_membership_flow() {
     let (status, _) = call(
         &state,
         post_csrf(
-            &format!("/api/groups/{gid}/members"),
+            &format!("/api/groups/{platform_id}/members"),
             &body,
             Some(("u_alice", "alice@holdfast.local")),
         ),
@@ -183,27 +293,140 @@ async fn groups_and_membership_flow() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
 
-    // Group page lists bob with his role; bob's person page lists the group.
-    let (_, page) = call(&state, get_auth("/groups", "u_alice", "alice@holdfast.local")).await;
+    // --- child group CSRF guard + success ----------------------------------
+    let body = form(&[
+        ("action", "add"),
+        ("child_group_id", &platform_id),
+        ("csrf_token", "WRONG"),
+    ]);
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            &format!("/api/groups/{eng_id}/children"),
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let body = form(&[
+        ("action", "add"),
+        ("child_group_id", &platform_id),
+        ("csrf_token", CSRF),
+    ]);
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            &format!("/api/groups/{eng_id}/children"),
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    // Group page and detail resolve Bob through the child group.
+    let (_, page) = call(
+        &state,
+        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+    )
+    .await;
     assert!(page.contains("maintainer"), "role shown on group page");
+    assert!(page.contains("Platform"), "child group shown");
+    assert!(page.contains("1 resolved"), "recursive member count shown");
+    let (_, detail) = call(
+        &state,
+        get_auth(
+            &format!("/groups/{eng_id}"),
+            "u_alice",
+            "alice@holdfast.local",
+        ),
+    )
+    .await;
+    assert!(detail.contains("Resolved members"));
+    assert!(detail.contains("bob@holdfast.local"));
+    assert!(detail.contains("Platform"));
+
+    let (_, filtered) = call(&state, get(&format!("/?group={eng_id}"))).await;
+    assert!(
+        filtered.contains("bob@holdfast.local"),
+        "parent group filter includes nested member"
+    );
+    assert!(
+        !filtered.contains("alice@holdfast.local"),
+        "parent group filter excludes non-member"
+    );
+
     let (_, bob) = call(&state, get("/u/u_bob")).await;
-    assert!(bob.contains("Engineering"), "bob's page lists the group");
+    assert!(
+        bob.contains("Platform"),
+        "bob's page lists direct child group"
+    );
+
+    // --- adding the parent as a child would create a cycle -> 400 -----------
+    let body = form(&[
+        ("action", "add"),
+        ("child_group_id", &eng_id),
+        ("csrf_token", CSRF),
+    ]);
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            &format!("/api/groups/{platform_id}/children"),
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // --- add to a non-existent group -> 404 -------------------------------
     let body = form(&[("action", "add"), ("sub", "u_bob"), ("csrf_token", CSRF)]);
     let (status, _) = call(
         &state,
-        post_csrf("/api/groups/grp_nope/members", &body, Some(("u_alice", "alice@holdfast.local"))),
+        post_csrf(
+            "/api/groups/grp_nope/members",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // --- remove the child group edge ---------------------------------------
+    let body = form(&[
+        ("action", "remove"),
+        ("child_group_id", &platform_id),
+        ("csrf_token", CSRF),
+    ]);
+    let (status, _) = call(
+        &state,
+        post_csrf(
+            &format!("/api/groups/{eng_id}/children"),
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, platform_detail) = call(
+        &state,
+        get_auth(
+            &format!("/groups/{platform_id}"),
+            "u_alice",
+            "alice@holdfast.local",
+        ),
+    )
+    .await;
+    assert!(platform_detail.contains("No parent groups"));
 
     // --- remove the member -------------------------------------------------
     let body = form(&[("action", "remove"), ("sub", "u_bob"), ("csrf_token", CSRF)]);
     let (status, _) = call(
         &state,
         post_csrf(
-            &format!("/api/groups/{gid}/members"),
+            &format!("/api/groups/{platform_id}/members"),
             &body,
             Some(("u_alice", "alice@holdfast.local")),
         ),
@@ -228,12 +451,16 @@ async fn unknown_person_is_404() {
 async fn call(state: &AppState, req: Request<Body>) -> (StatusCode, String) {
     let resp = app(state.clone()).oneshot(req).await.unwrap();
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
 async fn body_of(resp: axum::response::Response) -> String {
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     String::from_utf8_lossy(&bytes).to_string()
 }
 
@@ -258,7 +485,9 @@ fn post_csrf(uri: &str, body: &str, ident: Option<(&str, &str)>) -> Request<Body
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(header::COOKIE, format!("__Host-csrf={CSRF}"));
     if let Some((sub, email)) = ident {
-        b = b.header("x-auth-subject", sub).header("x-auth-email", email);
+        b = b
+            .header("x-auth-subject", sub)
+            .header("x-auth-email", email);
     }
     b.body(Body::from(body.to_string())).unwrap()
 }
@@ -276,7 +505,9 @@ fn enc(s: &str) -> String {
     let mut o = String::new();
     for b in s.bytes() {
         match b {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                o.push(b as char)
+            }
             b' ' => o.push('+'),
             _ => o.push_str(&format!("%{b:02X}")),
         }
@@ -286,10 +517,23 @@ fn enc(s: &str) -> String {
 
 /// Pull the first `grp_…` id out of a rendered groups page (the member-form action paths).
 fn extract_group_id(html: &str) -> Option<String> {
-    let i = html.find("grp_")?;
-    let rest = &html[i..];
-    let end = rest
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .unwrap_or(rest.len());
-    Some(rest[..end].to_string())
+    extract_group_ids(html).into_iter().next()
+}
+
+/// Pull all unique `grp_…` ids out of rendered group links/forms/options, preserving first-seen order.
+fn extract_group_ids(html: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = html;
+    while let Some(i) = rest.find("grp_") {
+        let candidate = &rest[i..];
+        let end = candidate
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(candidate.len());
+        let id = candidate[..end].to_string();
+        if !ids.iter().any(|seen| seen == &id) {
+            ids.push(id);
+        }
+        rest = &candidate[end..];
+    }
+    ids
 }
