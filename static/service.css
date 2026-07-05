@@ -229,3 +229,25 @@
 }
 .user-email { font-size: 13px; color: var(--ink-2); font-weight: 500; }
 @media (max-width: 640px) { .user-email, .topbar__title { display: none; } }
+
+/* ---- Responsive: Census-specific narrow-screen fixes -------------------- */
+/* Tablet (≤900px): tighten the org-tree indentation so the sticky-aside tree
+   (now full-width below the directory) stays readable, and let group cards
+   flow to a narrower track before the phone breakpoint. */
+@media (max-width: 900px) {
+  .org-tree ul { margin-left: var(--sp-3); padding-left: var(--sp-3); }
+  .group-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+
+/* Phone (≤640px): the 340px min-track on .group-grid overflows the viewport,
+   so drop to a single column; minimise org-tree indentation (the .org-chart
+   container already scrolls horizontally for deep chains); and stack the
+   person header so long emails/titles can't push past the avatar. */
+@media (max-width: 640px) {
+  .group-grid { grid-template-columns: 1fr; }
+  .org-tree ul { margin-left: var(--sp-2); padding-left: var(--sp-2); }
+  .org-chart { max-height: 60vh; }
+  .person__head { flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
+  .person__id { min-width: 0; max-width: 100%; }
+  .person__email { overflow-wrap: anywhere; }
+}
