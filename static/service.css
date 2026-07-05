@@ -1,0 +1,231 @@
+/* Census service surface, layered after Odyssey canonical CSS. */
+
+/* ==========================================================================
+   Census service section — the people directory's own surfaces (directory /
+   person rows, avatars, the groups panel & group cards, member chips, the
+   markdown bio prose, the search bar, the org editor) styled on the Okta
+   Odyssey kit above. Flat surfaces, hairline borders, soft accent tints,
+   medium heading weights, small radii — so the directory reads as the same
+   product as the rest of the estate. Every class name matches the templates.
+   ========================================================================== */
+
+/* Bridge: define only the helper tokens the canonical Odyssey layer doesn't
+   already provide. Canonical wins for every shared token (--accent-ink, --sh-*,
+   --fs-sm, --sp-1..8, --radius*), so those are deliberately NOT redefined here. */
+:root {
+  --text: var(--ink);
+  --text-muted: var(--ink-2);
+  --text-subtle: var(--ink-3);
+  --accent-border: var(--accent-soft-2);
+  --radius-pill: var(--r-pill);
+  --sp-10: 40px; --sp-12: 48px;
+  --fs-xs: var(--fs-sm); --fs-base: var(--fs-body); --fs-md: 15px;
+  --fs-lg: 18px; --fs-xl: 22px; --fs-2xl: 26px; --fs-3xl: 30px;
+}
+
+/* Align the app-bar gutter with Census's content column. */
+.topbar__inner { max-width: 1080px; }
+.console { max-width: 1080px; }
+
+/* ---- Top nav (Directory / Groups) --------------------------------------- */
+.topnav { display: flex; align-items: center; gap: var(--sp-4); }
+.topnav a {
+  font-size: var(--fs-sm); font-weight: 500; color: var(--text-muted);
+  padding: var(--sp-1) 0;
+}
+.topnav a:hover { color: var(--accent); }
+
+/* ---- Reading layout ----------------------------------------------------- */
+.page-reading { background: var(--bg); }
+.page-console { background: var(--bg); }
+.reader { max-width: 820px; margin: 0 auto; padding: var(--sp-10) var(--sp-6) var(--sp-12); }
+.reader--wide { max-width: 1080px; }
+.reader__head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-8);
+  padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border);
+}
+.reader__title { margin: 0; font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -0.025em; }
+.reader__sub { margin: var(--sp-2) 0 0; color: var(--text-muted); font-size: var(--fs-md); }
+
+.back-link { display: inline-flex; align-items: center; gap: 6px; margin-bottom: var(--sp-5); color: var(--text-muted); font-size: var(--fs-sm); font-weight: 500; }
+.back-link:hover { color: var(--accent); }
+
+/* ---- Search bar --------------------------------------------------------- */
+.searchbar { display: flex; gap: var(--sp-2); flex: none; }
+.searchbar input[type="search"] { width: 280px; max-width: 50vw; }
+.searchbar--filters { flex-wrap: wrap; justify-content: flex-end; }
+.searchbar--filters select { width: auto; min-width: 150px; }
+
+/* ---- Directory layout --------------------------------------------------- */
+.directory { display: grid; grid-template-columns: 1fr 300px; gap: var(--sp-8); align-items: start; }
+.directory__count { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--text-subtle); margin-bottom: var(--sp-3); }
+.person-list { display: flex; flex-direction: column; gap: 2px; }
+
+.person-row {
+  display: flex; gap: var(--sp-4); align-items: flex-start;
+  padding: var(--sp-4) var(--sp-3);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  transition: background .1s;
+}
+.person-row + .person-row { border-top: 1px solid var(--border); }
+.person-row:hover { background: var(--surface-2); border-top-color: transparent; }
+.row__main { min-width: 0; }
+.row__head { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+.row__name { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.row__title { font-size: var(--fs-sm); color: var(--accent-ink); font-weight: 500; }
+.row__email { font-size: var(--fs-sm); color: var(--text-subtle); margin-top: 2px; }
+.row__meta { font-size: var(--fs-sm); color: var(--text-muted); margin-top: 2px; }
+.row__bio { margin: var(--sp-2) 0 0; color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.55; }
+
+/* ---- Avatar (rounded square, matching the app-bar user chip) ------------- */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; overflow: hidden;
+  background: var(--accent-soft); color: var(--accent-2);
+  font-weight: 600; letter-spacing: 0.01em; text-transform: uppercase;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar--sm { width: 44px; height: 44px; font-size: var(--fs-sm); border-radius: var(--radius-md); }
+.avatar--lg { width: 72px; height: 72px; font-size: var(--fs-xl); border-radius: var(--radius); }
+
+/* ---- Side panel (groups) ------------------------------------------------ */
+.directory__aside { position: sticky; top: 84px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--sh-xs); overflow: hidden; }
+.panel__head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); }
+.panel__head h2 { margin: 0; font-size: var(--fs-base); font-weight: 600; }
+.panel__link { font-size: var(--fs-sm); font-weight: 500; }
+.grouplist { list-style: none; margin: 0; padding: var(--sp-2) 0; }
+.grouplist__item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-2) var(--sp-5); }
+.grouplist__item a { font-weight: 500; color: var(--text); }
+.grouplist__item a:hover { color: var(--accent); }
+.grouplist__count { font-size: var(--fs-xs); font-weight: 600; color: var(--accent-2); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: var(--radius-pill); padding: 1px 9px; }
+.grouplist__empty { padding: var(--sp-3) var(--sp-5); color: var(--text-subtle); font-size: var(--fs-sm); }
+.org-panel { margin-top: var(--sp-5); }
+.org-chart { padding: var(--sp-3) var(--sp-4) var(--sp-4); max-height: 520px; overflow: auto; }
+.org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
+.org-tree ul { margin-left: var(--sp-4); padding-left: var(--sp-4); border-left: 1px solid var(--border); }
+.org-node { margin: var(--sp-2) 0; }
+.org-card {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface);
+}
+.org-card a { font-weight: 600; color: var(--text); }
+.org-card a:hover { color: var(--accent); }
+.org-card__meta { font-size: var(--fs-xs); color: var(--text-subtle); line-height: 1.4; }
+
+/* ---- Person page -------------------------------------------------------- */
+.person__head { display: flex; gap: var(--sp-5); align-items: center; margin-bottom: var(--sp-8); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border); }
+.person__name { margin: 0; font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; }
+.person__title { margin-top: var(--sp-1); color: var(--accent-ink); font-weight: 500; }
+.person__email { margin-top: var(--sp-1); font-size: var(--fs-sm); }
+.person__updated { margin-top: var(--sp-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-subtle); }
+.person__section { margin-bottom: var(--sp-8); }
+.person__label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--text-subtle); margin: 0 0 var(--sp-3); }
+.details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); margin: 0; }
+.detail { padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); min-width: 0; }
+.detail dt { margin: 0 0 2px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-subtle); }
+.detail dd { margin: 0; color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+
+/* ---- Prose (rendered bio) ----------------------------------------------- */
+.prose { font-size: var(--fs-md); line-height: 1.7; color: var(--ink); }
+.prose > *:first-child { margin-top: 0; }
+.prose p { margin: 0 0 var(--sp-4); }
+.prose a { color: var(--accent-2); text-decoration: underline; text-underline-offset: 2px; }
+.prose a:hover { color: var(--accent); }
+.prose ul, .prose ol { margin: 0 0 var(--sp-4); padding-left: var(--sp-6); }
+.prose code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); border: 1px solid var(--border); padding: 2px 6px; border-radius: var(--radius-sm); }
+.prose h1, .prose h2, .prose h3 { font-size: var(--fs-lg); font-weight: 600; margin: var(--sp-5) 0 var(--sp-2); }
+
+/* ---- Chips (group memberships / member roles) --------------------------- */
+.chips, .chips__item { list-style: none; }
+.chips { margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.chips__item {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  padding: 4px 11px; background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm); font-size: var(--fs-sm); font-weight: 500;
+}
+.chips__item a { color: var(--text); }
+.chips__item a:hover { color: var(--accent); }
+.chips__empty { color: var(--text-subtle); font-size: var(--fs-sm); list-style: none; }
+.chip-role { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-2); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 1px 7px; }
+
+/* ---- Cards (Census spacing on the kit card) ----------------------------- */
+.card { margin-bottom: var(--sp-6); }
+.edit-card { margin-top: var(--sp-8); }
+.edit-card__head { margin: 0 0 var(--sp-5); font-size: var(--fs-lg); font-weight: 600; }
+
+/* ---- Group cards -------------------------------------------------------- */
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--sp-5); }
+.group-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-5); align-items: start; }
+.group-card { margin: 0; }
+.group__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); }
+.group__name { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.group__name a { color: var(--text); }
+.group__name a:hover { color: var(--accent); }
+.group__meta { font-size: var(--fs-xs); color: var(--text-subtle); white-space: nowrap; }
+.group__desc { margin: var(--sp-2) 0 var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.55; }
+.group__subhead { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-subtle); }
+.members { list-style: none; margin: var(--sp-3) 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.member { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-top: 1px solid var(--border); }
+.member:first-child { border-top: 0; }
+.member__name { font-weight: 500; color: var(--text); }
+.member__name:hover { color: var(--accent); }
+.member .inline-form { margin-left: auto; }
+
+/* ---- Forms (Census editor + inline add rows) ---------------------------- */
+.editor__body { min-height: 200px; resize: vertical; font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.6; }
+.editor__actions { display: flex; align-items: center; gap: var(--sp-3); }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+.member-add { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; margin-top: var(--sp-3); }
+.member-add select { flex: 1 1 160px; width: auto; }
+.member-add input[type="text"] { flex: 1 1 140px; width: auto; }
+
+/* ---- Buttons (Census-only variant) -------------------------------------- */
+.btn-xs { padding: 4px 10px; font-size: var(--fs-xs); border-radius: var(--radius-sm); }
+.inline-form { display: inline; margin: 0; }
+
+/* ---- Empty / error states ----------------------------------------------- */
+.empty-state { text-align: center; padding: var(--sp-12) var(--sp-6); color: var(--text-muted); }
+.empty-state h2 { margin: 0 0 var(--sp-2); font-size: var(--fs-xl); font-weight: 600; color: var(--text); }
+.empty-state p { margin: 0 0 var(--sp-6); }
+
+.error-card { max-width: 460px; margin: var(--sp-12) auto; text-align: center; }
+.error-card__code { font-size: 52px; font-weight: 600; color: var(--accent-2); letter-spacing: -0.02em; }
+.error-card__title { margin: var(--sp-2) 0; font-size: var(--fs-xl); font-weight: 600; }
+.error-card__msg { margin: 0 0 var(--sp-6); color: var(--text-muted); }
+
+/* ---- Responsive --------------------------------------------------------- */
+@media (max-width: 880px) {
+  .directory { grid-template-columns: 1fr; }
+  .directory__aside { position: static; }
+  .reader__head { flex-direction: column; align-items: stretch; }
+  .searchbar input[type="search"] { max-width: none; width: 100%; }
+  .searchbar--filters select { width: 100%; }
+  .details-grid, .field-grid, .group-detail-grid { grid-template-columns: 1fr; }
+  .topnav { display: none; }
+  .topbar__title { display: none; }
+}
+
+
+/* App-bar right-side helpers rendered by Census's topbar(). */
+/* "All apps" back link + user chip (rendered by userbox) */
+.allapps {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface);
+  font-size: 12.5px; font-weight: 500; color: var(--ink-2);
+}
+.allapps:hover { background: var(--bg-2); color: var(--ink); }
+.allapps svg { width: 14px; height: 14px; opacity: .8; }
+.userchip { display: inline-flex; align-items: center; gap: 8px; padding-left: 4px; }
+.userchip__avatar {
+  width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 12px;
+}
+.user-email { font-size: 13px; color: var(--ink-2); font-weight: 500; }
+@media (max-width: 640px) { .user-email, .topbar__title { display: none; } }

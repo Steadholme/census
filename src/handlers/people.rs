@@ -19,7 +19,7 @@ use crate::auth;
 use crate::config::{MAX_BIO_CHARS, MAX_NAME_CHARS, MAX_TITLE_CHARS, MAX_URL_CHARS};
 use crate::directory::Identity;
 use crate::error::AppError;
-use crate::handlers::{esc, fmt_date, html_with_cookie, initials, redirect, topbar, APP_CSS};
+use crate::handlers::{app_css, esc, fmt_date, html_with_cookie, initials, redirect, topbar};
 use crate::markdown;
 use crate::store::{recursive_members_of, Group, Profile};
 use crate::{now_secs, AppState};
@@ -252,7 +252,7 @@ pub async fn directory(
     let org_chart = render_org_chart(&visible_people);
 
     let body = DIRECTORY_HTML
-        .replace("{{CSS}}", APP_CSS)
+        .replace("{{CSS}}", app_css())
         .replace("{{TOPBAR}}", &topbar("Directory", &email))
         .replace("{{QUERY}}", &esc(needle.trim()))
         .replace(
@@ -375,7 +375,7 @@ pub async fn person(
     };
 
     let page = PERSON_HTML
-        .replace("{{CSS}}", APP_CSS)
+        .replace("{{CSS}}", app_css())
         .replace("{{TOPBAR}}", &topbar("Person", &email))
         .replace("{{NAME_TEXT}}", &esc(&label))
         .replace("{{AVATAR}}", &avatar)

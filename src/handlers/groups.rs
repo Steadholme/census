@@ -18,7 +18,7 @@ use crate::auth;
 use crate::config::{MAX_NAME_CHARS, MAX_TITLE_CHARS};
 use crate::error::AppError;
 use crate::handlers::people::{assemble_people, viewer_identity};
-use crate::handlers::{esc, fmt_date, html_with_cookie, redirect, topbar, APP_CSS};
+use crate::handlers::{app_css, esc, fmt_date, html_with_cookie, redirect, topbar};
 use crate::store::{recursive_members_of, would_create_group_cycle, Group, GroupChild, Membership};
 use crate::{now_nanos, now_secs, AppState};
 
@@ -152,7 +152,7 @@ pub async fn groups_page(State(state): State<AppState>, headers: HeaderMap) -> R
     }
 
     let body = GROUPS_HTML
-        .replace("{{CSS}}", APP_CSS)
+        .replace("{{CSS}}", app_css())
         .replace("{{TOPBAR}}", &topbar("Groups", &email))
         .replace("{{CSRF}}", &esc(&csrf))
         .replace("{{CARDS}}", &cards);
@@ -200,7 +200,7 @@ pub async fn group_detail(
         format!(r#"<p class="group__desc">{}</p>"#, esc(&group.description))
     };
     let body = GROUP_HTML
-        .replace("{{CSS}}", APP_CSS)
+        .replace("{{CSS}}", app_css())
         .replace("{{TOPBAR}}", &topbar("Group", &email))
         .replace("{{CSRF}}", &esc(&csrf))
         .replace("{{GROUP_ID}}", &esc(&group.id))
