@@ -97,6 +97,7 @@ async fn directory_and_profile_flow() {
         ("phone", "+1 555 0100"),
         ("location", "Berlin"),
         ("timezone", "Europe/Berlin"),
+        ("locale", "ja"),
         ("avatar_url", "javascript:alert(3)"),
         ("bio", bio),
         ("csrf_token", CSRF),
@@ -117,6 +118,18 @@ async fn directory_and_profile_flow() {
         .unwrap()
         .to_string();
     assert_eq!(location, "/u/u_alice");
+    let lang_cookie = resp
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(lang_cookie.contains("__Secure-lang=ja"));
+    assert!(lang_cookie.contains("Domain=.w33d.xyz"));
+    assert!(lang_cookie.contains("Path=/"));
+    assert!(lang_cookie.contains("Secure"));
+    assert!(lang_cookie.contains("HttpOnly"));
+    assert!(lang_cookie.contains("SameSite=Lax"));
+    assert!(lang_cookie.contains("Max-Age=31536000"));
 
     // --- person page reflects the edit, sanitized -------------------------
     let (status, body) = call(&state, get("/u/u_alice")).await;
@@ -136,6 +149,15 @@ async fn directory_and_profile_flow() {
     assert!(
         !body.contains("javascript:alert"),
         "js: link + avatar neutralized"
+    );
+    let (_, owner_body) = call(
+        &state,
+        get_auth("/u/u_alice", "u_alice", "alice@holdfast.local"),
+    )
+    .await;
+    assert!(
+        owner_body.contains(r#"<option value="ja" selected>日本語</option>"#),
+        "saved locale selected in edit form"
     );
 
     // --- directory now shows the display name + title ---------------------
@@ -179,6 +201,48 @@ async fn directory_and_profile_flow() {
     assert_eq!(alice["phone"], "+1 555 0100");
     assert_eq!(alice["location"], "Berlin");
     assert_eq!(alice["timezone"], "Europe/Berlin");
+    assert_eq!(alice["locale"], "ja");
+
+    // --- clearing language preference clears the estate-wide cookie ---------
+    let body = form(&[
+        ("display_name", "Alice Anderson"),
+        ("title", "Platform Engineer"),
+        ("department", "Engineering"),
+        ("manager_sub", "u_bob"),
+        ("phone", "+1 555 0100"),
+        ("location", "Berlin"),
+        ("timezone", "Europe/Berlin"),
+        ("locale", ""),
+        ("avatar_url", ""),
+        ("bio", bio),
+        ("csrf_token", CSRF),
+    ]);
+    let resp = app(state.clone())
+        .oneshot(post_csrf(
+            "/api/profile",
+            &body,
+            Some(("u_alice", "alice@holdfast.local")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let lang_cookie = resp
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(lang_cookie.contains("__Secure-lang=;"));
+    assert!(lang_cookie.contains("Max-Age=0"));
+
+    let (_, body) = call(&state, get("/api/people")).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let alice = v["people"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["sub"] == "u_alice")
+        .expect("alice in feed after clearing locale");
+    assert_eq!(alice["locale"], "");
 }
 
 #[tokio::test]

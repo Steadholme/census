@@ -25,6 +25,7 @@ pub struct PersonDto {
     pub phone: String,
     pub location: String,
     pub timezone: String,
+    pub locale: String,
 }
 
 /// The JSON feed envelope.
@@ -53,6 +54,7 @@ pub async fn people_json(
             phone: p.profile.phone,
             location: p.profile.location,
             timezone: p.profile.timezone,
+            locale: p.profile.locale,
         })
         .collect();
     Json(PeopleResponse {

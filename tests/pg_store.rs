@@ -46,6 +46,7 @@ async fn pg_store_full_integration() {
         phone: "+1 555 0100".to_string(),
         location: "New York".to_string(),
         timezone: "America/New_York".to_string(),
+        locale: "en".to_string(),
         bio: "Builds things.".to_string(),
         avatar_url: "https://cdn.w33d.xyz/a.png".to_string(),
         updated_at: now,
@@ -63,6 +64,7 @@ async fn pg_store_full_integration() {
     assert_eq!(refetched.title, "Staff Engineer");
     assert_eq!(refetched.department, "Engineering");
     assert_eq!(refetched.location, "New York");
+    assert_eq!(refetched.locale, "en");
     assert!(pg.list_profiles().await.iter().any(|p| p.sub == "u_alice"));
 
     // --- groups: create + unique-name conflict -----------------------------

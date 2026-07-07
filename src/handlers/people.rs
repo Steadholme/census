@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Form;
 use serde::Deserialize;
@@ -76,6 +76,8 @@ pub struct ProfileForm {
     pub location: String,
     #[serde(default)]
     pub timezone: String,
+    #[serde(default)]
+    pub locale: String,
     #[serde(default)]
     pub bio: String,
     #[serde(default)]
@@ -432,6 +434,7 @@ pub async fn update_profile(
     let phone = cap(form.phone.trim(), MAX_TITLE_CHARS);
     let location = cap(form.location.trim(), MAX_TITLE_CHARS);
     let timezone = cap(form.timezone.trim(), MAX_TITLE_CHARS);
+    let locale = normalize_locale(&form.locale);
     let bio = cap(form.bio.trim(), MAX_BIO_CHARS);
     // Store only an allowlisted avatar URL; a rejected scheme (javascript:, data:, …) blanks it.
     let avatar_url = cap(
@@ -448,6 +451,7 @@ pub async fn update_profile(
         phone,
         location,
         timezone,
+        locale,
         bio,
         avatar_url,
         updated_at: now_secs(),
@@ -467,7 +471,16 @@ pub async fn update_profile(
         "profile edited",
     ));
 
-    Ok(redirect(&format!("/u/{sub}")))
+    let lang_cookie = if profile.locale.is_empty() {
+        auth::clear_lang_cookie()
+    } else {
+        auth::lang_cookie(&profile.locale)
+    };
+    let mut resp = redirect(&format!("/u/{sub}"));
+    if let Ok(value) = HeaderValue::from_str(&lang_cookie) {
+        resp.headers_mut().append(header::SET_COOKIE, value);
+    }
+    Ok(resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +765,7 @@ fn render_org_node(
 /// The owner's inline profile edit form (CSRF-protected, posts to `/api/profile`).
 fn render_edit_form(csrf: &str, profile: &Profile, people: &[Person]) -> String {
     let manager_options = render_manager_options(people, profile);
+    let locale_options = render_locale_options(&profile.locale);
     format!(
         r#"<section class="card edit-card">
   <div class="card__body">
@@ -786,9 +800,15 @@ fn render_edit_form(csrf: &str, profile: &Profile, people: &[Person]) -> String 
           <input type="text" id="location" name="location" maxlength="160" placeholder="City, country" value="{location}">
         </div>
       </div>
-      <div class="field">
-        <label for="timezone">Timezone</label>
-        <input type="text" id="timezone" name="timezone" maxlength="160" placeholder="e.g. America/New_York" value="{timezone}">
+      <div class="field-grid">
+        <div class="field">
+          <label for="timezone">Timezone</label>
+          <input type="text" id="timezone" name="timezone" maxlength="160" placeholder="e.g. America/New_York" value="{timezone}">
+        </div>
+        <div class="field">
+          <label for="locale">Language</label>
+          <select id="locale" name="locale">{locale_options}</select>
+        </div>
       </div>
       <div class="field">
         <label for="avatar_url">Avatar URL <span class="muted">(http/https)</span></label>
@@ -812,9 +832,30 @@ fn render_edit_form(csrf: &str, profile: &Profile, people: &[Person]) -> String 
         phone = esc(&profile.phone),
         location = esc(&profile.location),
         timezone = esc(&profile.timezone),
+        locale_options = locale_options,
         avatar = esc(&profile.avatar_url),
         bio = esc(&profile.bio),
     )
+}
+
+fn render_locale_options(selected: &str) -> String {
+    let selected = normalize_locale(selected);
+    let mut html = String::new();
+    for (code, label) in [
+        ("", "System default"),
+        ("en", "English"),
+        ("zh", "中文"),
+        ("ja", "日本語"),
+    ] {
+        let selected_attr = if code == selected { " selected" } else { "" };
+        html.push_str(&format!(
+            r#"<option value="{code}"{selected}>{label}</option>"#,
+            code = esc(code),
+            selected = selected_attr,
+            label = esc(label),
+        ));
+    }
+    html
 }
 
 fn render_manager_options(people: &[Person], profile: &Profile) -> String {
@@ -848,6 +889,15 @@ fn render_manager_options(people: &[Person], profile: &Profile) -> String {
         ));
     }
     html
+}
+
+fn normalize_locale(raw: &str) -> String {
+    match raw.trim() {
+        "en" => "en".to_string(),
+        "zh" => "zh".to_string(),
+        "ja" => "ja".to_string(),
+        _ => String::new(),
+    }
 }
 
 /// Truncate a string to at most `n` chars (defense against oversized submissions).

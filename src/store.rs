@@ -32,6 +32,7 @@ pub struct Profile {
     pub phone: String,
     pub location: String,
     pub timezone: String,
+    pub locale: String,
     pub bio: String,
     pub avatar_url: String,
     pub updated_at: i64,
@@ -399,6 +400,7 @@ impl PgStore {
                  phone TEXT NOT NULL DEFAULT '', \
                  location TEXT NOT NULL DEFAULT '', \
                  timezone TEXT NOT NULL DEFAULT '', \
+                 locale TEXT NOT NULL DEFAULT '', \
                  bio TEXT NOT NULL DEFAULT '', \
                  avatar_url TEXT NOT NULL DEFAULT '', \
                  updated_at BIGINT NOT NULL DEFAULT 0\
@@ -427,6 +429,11 @@ impl PgStore {
         .await?;
         sqlx::query(
             "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS locale TEXT NOT NULL DEFAULT ''",
         )
         .execute(&self.pool)
         .await?;
@@ -495,6 +502,7 @@ impl PgStore {
             phone: row.try_get("phone")?,
             location: row.try_get("location")?,
             timezone: row.try_get("timezone")?,
+            locale: row.try_get("locale")?,
             bio: row.try_get("bio")?,
             avatar_url: row.try_get("avatar_url")?,
             updated_at: row.try_get("updated_at")?,
@@ -529,7 +537,7 @@ impl PgStore {
 
     async fn list_profiles_async(&self) -> Result<Vec<Profile>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT sub, display_name, title, department, manager_sub, phone, location, timezone, \
+            "SELECT sub, display_name, title, department, manager_sub, phone, location, timezone, locale, \
                     bio, avatar_url, updated_at \
              FROM profiles ORDER BY sub ASC LIMIT $1",
         )
@@ -541,7 +549,7 @@ impl PgStore {
 
     async fn get_profile_async(&self, sub: &str) -> Result<Option<Profile>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT sub, display_name, title, department, manager_sub, phone, location, timezone, \
+            "SELECT sub, display_name, title, department, manager_sub, phone, location, timezone, locale, \
                     bio, avatar_url, updated_at \
              FROM profiles WHERE sub = $1",
         )
@@ -558,11 +566,11 @@ impl PgStore {
         let _guard = self.write_lock.lock().await;
         sqlx::query(
             "INSERT INTO profiles (sub, display_name, title, department, manager_sub, phone, \
-                                    location, timezone, bio, avatar_url, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                                    location, timezone, locale, bio, avatar_url, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              ON CONFLICT (sub) DO UPDATE SET \
                  display_name = $2, title = $3, department = $4, manager_sub = $5, phone = $6, \
-                 location = $7, timezone = $8, bio = $9, avatar_url = $10, updated_at = $11",
+                 location = $7, timezone = $8, locale = $9, bio = $10, avatar_url = $11, updated_at = $12",
         )
         .bind(&p.sub)
         .bind(&p.display_name)
@@ -572,6 +580,7 @@ impl PgStore {
         .bind(&p.phone)
         .bind(&p.location)
         .bind(&p.timezone)
+        .bind(&p.locale)
         .bind(&p.bio)
         .bind(&p.avatar_url)
         .bind(p.updated_at)

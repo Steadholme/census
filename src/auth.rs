@@ -24,6 +24,10 @@ pub const HEADER_SCOPE: &str = "x-auth-scope";
 pub const CSRF_COOKIE: &str = "__Host-csrf";
 /// CSRF cookie lifetime, seconds.
 const CSRF_TTL: u64 = 3600;
+/// Estate-wide display-language cookie. `__Secure-` allows Domain for cross-subdomain hydration.
+pub const LANG_COOKIE: &str = "__Secure-lang";
+const LANG_COOKIE_DOMAIN: &str = ".w33d.xyz";
+const LANG_COOKIE_TTL: u64 = 365 * 24 * 60 * 60;
 
 /// The authenticated viewer's subject (stable user id), if the gateway injected one.
 pub fn viewer_sub(headers: &HeaderMap) -> Option<String> {
@@ -82,6 +86,20 @@ pub fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 /// `Set-Cookie` value for the (JS-readable) CSRF cookie.
 pub fn csrf_cookie(value: &str) -> String {
     format!("{CSRF_COOKIE}={value}; Path=/; Secure; SameSite=Lax; Max-Age={CSRF_TTL}")
+}
+
+/// `Set-Cookie` value for the cross-subdomain display-language preference.
+pub fn lang_cookie(value: &str) -> String {
+    format!(
+        "{LANG_COOKIE}={value}; Domain={LANG_COOKIE_DOMAIN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={LANG_COOKIE_TTL}"
+    )
+}
+
+/// `Set-Cookie` value that clears the cross-subdomain display-language preference.
+pub fn clear_lang_cookie() -> String {
+    format!(
+        "{LANG_COOKIE}=; Domain={LANG_COOKIE_DOMAIN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0"
+    )
 }
 
 // ---------------------------------------------------------------------------
