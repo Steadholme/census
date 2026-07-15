@@ -1,4 +1,4 @@
-//! Census — the people directory, profiles & groups for the HOLDFAST stack.
+//! Census — the people directory, profiles & groups for the Steadholme stack.
 //!
 //! Library root: defines [`AppState`], wires the routes via [`app`], and provides
 //! [`build_dev_state`] (in-memory store + empty directory, no database) and

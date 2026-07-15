@@ -1,4 +1,4 @@
-//! Machine JSON people feed for other HOLDFAST services.
+//! Machine JSON people feed for other Steadholme services.
 //!
 //! `GET /api/people` returns the assembled directory (Keystone identities joined to their stored
 //! profiles) as JSON. It carries only safe directory fields — subject, email, display name, title —

@@ -1,6 +1,6 @@
 # Census — people directory, profiles & groups
 
-Census is the authoritative people directory of the HOLDFAST estate. It layers an editable
+Census is the authoritative people directory of the Steadholme estate. It layers an editable
 profile / group / membership store over the real identities **Keystone** owns: it READS the shared
 `holdfast` database's `users` table (subject + email only — **never** the password hash) to
 enumerate who exists, and owns the editable layer in its own `census` database.

@@ -2,7 +2,7 @@
 name = "census"
 version = "0.1.0"
 edition = "2021"
-description = "Census — people directory, profiles & groups layered over Keystone identities for the HOLDFAST stack."
+description = "Census — people directory, profiles & groups layered over Keystone identities for the Steadholme stack."
 license = "MIT OR Apache-2.0"
 
 [lib]
