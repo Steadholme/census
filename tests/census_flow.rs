@@ -22,11 +22,11 @@ fn seeded_state() -> AppState {
     state.directory = Arc::new(InMemoryDirectory::with_identities(vec![
         Identity {
             sub: "u_alice".to_string(),
-            email: "alice@holdfast.local".to_string(),
+            email: "alice@steadholme.local".to_string(),
         },
         Identity {
             sub: "u_bob".to_string(),
-            email: "bob@holdfast.local".to_string(),
+            email: "bob@steadholme.local".to_string(),
         },
     ]));
     state
@@ -43,17 +43,17 @@ async fn directory_and_profile_flow() {
     // --- directory lists the seeded identities -----------------------------
     let (status, body) = call(&state, get("/")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("alice@holdfast.local"), "alice in directory");
-    assert!(body.contains("bob@holdfast.local"), "bob in directory");
+    assert!(body.contains("alice@steadholme.local"), "alice in directory");
+    assert!(body.contains("bob@steadholme.local"), "bob in directory");
 
     // --- keyword filter ----------------------------------------------------
     let (_, body) = call(&state, get("/?q=bob")).await;
-    assert!(body.contains("bob@holdfast.local"), "bob matches filter");
-    assert!(!body.contains("alice@holdfast.local"), "alice filtered out");
+    assert!(body.contains("bob@steadholme.local"), "bob matches filter");
+    assert!(!body.contains("alice@steadholme.local"), "alice filtered out");
 
     // --- GET /u/{sub} for self mints a CSRF cookie + edit form -------------
     let resp = app(state.clone())
-        .oneshot(get_auth("/u/u_alice", "u_alice", "alice@holdfast.local"))
+        .oneshot(get_auth("/u/u_alice", "u_alice", "alice@steadholme.local"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -81,7 +81,7 @@ async fn directory_and_profile_flow() {
         post_csrf(
             "/api/profile",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -106,7 +106,7 @@ async fn directory_and_profile_flow() {
         .oneshot(post_csrf(
             "/api/profile",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ))
         .await
         .unwrap();
@@ -140,7 +140,7 @@ async fn directory_and_profile_flow() {
     assert!(body.contains("+1 555 0100"), "phone shown");
     assert!(body.contains("Berlin"), "location shown");
     assert!(body.contains("Europe/Berlin"), "timezone shown");
-    assert!(body.contains("bob@holdfast.local"), "manager shown");
+    assert!(body.contains("bob@steadholme.local"), "manager shown");
     assert!(
         body.contains("<strong>there</strong>"),
         "bio markdown rendered"
@@ -152,7 +152,7 @@ async fn directory_and_profile_flow() {
     );
     let (_, owner_body) = call(
         &state,
-        get_auth("/u/u_alice", "u_alice", "alice@holdfast.local"),
+        get_auth("/u/u_alice", "u_alice", "alice@steadholme.local"),
     )
     .await;
     assert!(
@@ -172,7 +172,7 @@ async fn directory_and_profile_flow() {
         "department filter includes Alice"
     );
     assert!(
-        !body.contains("bob@holdfast.local"),
+        !body.contains("bob@steadholme.local"),
         "department filter excludes Bob"
     );
 
@@ -194,7 +194,7 @@ async fn directory_and_profile_flow() {
         .find(|p| p["sub"] == "u_alice")
         .expect("alice in feed");
     assert_eq!(alice["display_name"], "Alice Anderson");
-    assert_eq!(alice["email"], "alice@holdfast.local");
+    assert_eq!(alice["email"], "alice@steadholme.local");
     assert_eq!(alice["title"], "Platform Engineer");
     assert_eq!(alice["department"], "Engineering");
     assert_eq!(alice["manager_sub"], "u_bob");
@@ -221,7 +221,7 @@ async fn directory_and_profile_flow() {
         .oneshot(post_csrf(
             "/api/profile",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ))
         .await
         .unwrap();
@@ -261,7 +261,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             "/api/groups",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -278,7 +278,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             "/api/groups",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -291,7 +291,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             "/api/groups",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -304,7 +304,7 @@ async fn groups_and_membership_flow() {
     // Discover the Engineering group id from the groups page.
     let (_, page) = call(
         &state,
-        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+        get_auth("/groups", "u_alice", "alice@steadholme.local"),
     )
     .await;
     assert!(page.contains("Engineering"));
@@ -322,14 +322,14 @@ async fn groups_and_membership_flow() {
         post_csrf(
             "/api/groups",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (_, page) = call(
         &state,
-        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+        get_auth("/groups", "u_alice", "alice@steadholme.local"),
     )
     .await;
     let ids = extract_group_ids(&page);
@@ -351,7 +351,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{platform_id}/members"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -368,7 +368,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{eng_id}/children"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -384,7 +384,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{eng_id}/children"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -393,7 +393,7 @@ async fn groups_and_membership_flow() {
     // Group page and detail resolve Bob through the child group.
     let (_, page) = call(
         &state,
-        get_auth("/groups", "u_alice", "alice@holdfast.local"),
+        get_auth("/groups", "u_alice", "alice@steadholme.local"),
     )
     .await;
     assert!(page.contains("maintainer"), "role shown on group page");
@@ -404,21 +404,21 @@ async fn groups_and_membership_flow() {
         get_auth(
             &format!("/groups/{eng_id}"),
             "u_alice",
-            "alice@holdfast.local",
+            "alice@steadholme.local",
         ),
     )
     .await;
     assert!(detail.contains("Resolved members"));
-    assert!(detail.contains("bob@holdfast.local"));
+    assert!(detail.contains("bob@steadholme.local"));
     assert!(detail.contains("Platform"));
 
     let (_, filtered) = call(&state, get(&format!("/?group={eng_id}"))).await;
     assert!(
-        filtered.contains("bob@holdfast.local"),
+        filtered.contains("bob@steadholme.local"),
         "parent group filter includes nested member"
     );
     assert!(
-        !filtered.contains("alice@holdfast.local"),
+        !filtered.contains("alice@steadholme.local"),
         "parent group filter excludes non-member"
     );
 
@@ -439,7 +439,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{platform_id}/children"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -452,7 +452,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             "/api/groups/grp_nope/members",
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -469,7 +469,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{eng_id}/children"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
@@ -479,7 +479,7 @@ async fn groups_and_membership_flow() {
         get_auth(
             &format!("/groups/{platform_id}"),
             "u_alice",
-            "alice@holdfast.local",
+            "alice@steadholme.local",
         ),
     )
     .await;
@@ -492,7 +492,7 @@ async fn groups_and_membership_flow() {
         post_csrf(
             &format!("/api/groups/{platform_id}/members"),
             &body,
-            Some(("u_alice", "alice@holdfast.local")),
+            Some(("u_alice", "alice@steadholme.local")),
         ),
     )
     .await;
