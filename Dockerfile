@@ -22,11 +22,12 @@ RUN mkdir -p src \
     && cargo build --release --bin census \
     && rm -rf src
 
-# Now build the real binary. static/ + templates/ are include_str!'d into the binary, so they
-# must be present at compile time.
+# Now build the real binary. static/, templates/, and migrations/ are include_str!'d into the
+# binary, so they must be present at compile time.
 COPY src ./src
 COPY static ./static
 COPY templates ./templates
+COPY migrations ./migrations
 RUN touch src/main.rs src/lib.rs \
     && cargo build --release --bin census \
     && strip target/release/census

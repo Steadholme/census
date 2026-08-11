@@ -8,24 +8,23 @@
   <style>{{CSS}}</style>
 </head>
 <body class="page-console">
+<a class="skip-link" href="#main">Skip to the registry</a>
 {{TOPBAR}}
-<main class="console">
+<main class="console" id="main" tabindex="-1">
   <div class="console__head">
+    <p class="reader__eyebrow">The registry</p>
     <h1>Groups</h1>
-    <p class="sub">Organize people into teams. Membership changes are audited.</p>
+    <p class="sub">Groups are curated by every signed-in member — joining grants no permission, and a role is descriptive text. Changes may be recorded in the estate audit log (best-effort, no delivery receipt).</p>
   </div>
+  {{BANNER}}
 
-  <section class="card">
+  <section class="card" aria-labelledby="create-group-h">
     <div class="card__body">
-      <h2 class="edit-card__head">Create a group</h2>
-      <form class="member-add" method="post" action="/api/groups">
-        <input type="hidden" name="csrf_token" value="{{CSRF}}">
-        <input type="text" name="name" required maxlength="120" placeholder="Group name" aria-label="Group name">
-        <input type="text" name="description" maxlength="2048" placeholder="Description (optional)" aria-label="Description">
-        <button class="btn btn-primary" type="submit">Create</button>
-      </form>
+      <h2 class="edit-card__head" id="create-group-h">Create a group</h2>
+      {{CREATE_FORM}}
     </div>
   </section>
+  {{BOUNDARY}}
 
   <div class="group-grid">
     {{CARDS}}

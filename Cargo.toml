@@ -30,6 +30,8 @@ async-trait = "0.1"
 # the /api/people JSON feed.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Canonical payload hashes fence workforce/JML idempotency replays.
+sha2 = "0.10"
 # Ergonomic error/store enums -> branded error page / HTTP status.
 thiserror = "2"
 # Structured logging.

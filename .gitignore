@@ -9,3 +9,9 @@ Cargo.lock.orig
 
 # Agent scratch
 .workflow/
+
+# Browser gate runtime and diagnostic output (gate sources remain tracked)
+/.gate/.cert/
+/.gate/artifacts/
+/.gate/diagnostic-artifacts/
+/.gate/node_modules/

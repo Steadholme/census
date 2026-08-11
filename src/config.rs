@@ -19,10 +19,12 @@ pub const MAX_BIO_CHARS: usize = 8 * 1024;
 pub const MAX_URL_CHARS: usize = 1024;
 
 /// Runtime configuration. Cheap to clone; shared read-only behind `Arc`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     /// Listen address (`BIND_ADDR`).
     pub bind_addr: String,
+    /// Independent machine credential for workforce intake/changefeed. Never rendered or logged.
+    workforce_service_token: Option<String>,
 }
 
 impl Config {
@@ -30,6 +32,7 @@ impl Config {
     pub fn dev() -> Self {
         Config {
             bind_addr: DEFAULT_BIND_ADDR.to_string(),
+            workforce_service_token: None,
         }
     }
 
@@ -39,7 +42,30 @@ impl Config {
         if let Some(v) = env_nonempty("BIND_ADDR") {
             config.bind_addr = v;
         }
+        config.workforce_service_token = env_nonempty("CENSUS_WORKFORCE_SERVICE_TOKEN");
         config
+    }
+
+    pub fn workforce_service_token(&self) -> Option<&str> {
+        self.workforce_service_token.as_deref()
+    }
+
+    /// Test/dev builder that avoids mutating process-global environment variables.
+    pub fn with_workforce_service_token(mut self, token: impl Into<String>) -> Self {
+        self.workforce_service_token = Some(token.into());
+        self
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("bind_addr", &self.bind_addr)
+            .field(
+                "workforce_service_token_configured",
+                &self.workforce_service_token.is_some(),
+            )
+            .finish()
     }
 }
 

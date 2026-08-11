@@ -138,7 +138,10 @@ mod tests {
     #[test]
     fn escapes_raw_html_script() {
         let html = render_html("ok <script>alert(1)</script> done");
-        assert!(!html.contains("<script>"), "raw script tag must not survive");
+        assert!(
+            !html.contains("<script>"),
+            "raw script tag must not survive"
+        );
         assert!(html.contains("&lt;script&gt;"));
     }
 
@@ -155,7 +158,10 @@ mod tests {
             safe_avatar_url("https://cdn.w33d.xyz/a.png").as_deref(),
             Some("https://cdn.w33d.xyz/a.png")
         );
-        assert_eq!(safe_avatar_url("/static/a.png").as_deref(), Some("/static/a.png"));
+        assert_eq!(
+            safe_avatar_url("/static/a.png").as_deref(),
+            Some("/static/a.png")
+        );
         assert_eq!(safe_avatar_url("javascript:alert(1)"), None);
         assert_eq!(safe_avatar_url("data:image/png;base64,AAAA"), None);
         assert_eq!(safe_avatar_url("   "), None);

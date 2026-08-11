@@ -1,16 +1,17 @@
 //! Machine JSON people feed for other Steadholme services.
 //!
 //! `GET /api/people` returns the assembled directory (Keystone identities joined to their stored
-//! profiles) as JSON. It carries only safe directory fields — subject, email, display name, title —
-//! NEVER a credential. Served behind the same internal Sluice route; in-network service callers may
-//! also reach it directly at `census:9130`.
+//! profiles) as JSON. It carries the frozen ten safe directory/profile fields and NEVER a
+//! credential. Served behind the same internal Sluice route; in-network service callers may also
+//! reach it directly at `census:9130`.
 
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
 
-use crate::handlers::people::{assemble_people, viewer_identity};
+use crate::handlers::people::{assemble_people, viewer_identity, ReadError};
 use crate::AppState;
 
 /// One person in the JSON feed.
@@ -35,14 +36,36 @@ pub struct PeopleResponse {
     pub people: Vec<PersonDto>,
 }
 
+#[derive(Debug, Serialize)]
+struct UnavailableResponse {
+    error: &'static str,
+    detail: &'static str,
+}
+
 /// `GET /api/people` — every directory identity joined to its profile, as JSON.
-pub async fn people_json(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<PeopleResponse> {
+pub async fn people_json(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let viewer = viewer_identity(&headers);
-    let people = assemble_people(&state, viewer.as_ref()).await;
-    let dtos: Vec<PersonDto> = people
+    let assembled = match assemble_people(&state, viewer.as_ref()).await {
+        Ok(assembled) => assembled,
+        Err(error) => {
+            let detail = match &error {
+                ReadError::Identity(_) => "identity source unavailable",
+                ReadError::Store(_) => "profile store unavailable",
+            };
+            tracing::error!(error = %error, "people feed unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(UnavailableResponse {
+                    error: "unavailable",
+                    detail,
+                }),
+            )
+                .into_response();
+        }
+    };
+    let count = assembled.identity_count;
+    let dtos: Vec<PersonDto> = assembled
+        .people
         .into_iter()
         .map(|p| PersonDto {
             sub: p.identity.sub,
@@ -58,7 +81,8 @@ pub async fn people_json(
         })
         .collect();
     Json(PeopleResponse {
-        count: dtos.len(),
+        count,
         people: dtos,
     })
+    .into_response()
 }

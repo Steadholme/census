@@ -8,8 +8,9 @@
   <style>{{CSS}}</style>
 </head>
 <body class="page-reading">
+<a class="skip-link" href="#main">Skip to the dossier</a>
 {{TOPBAR}}
-<main class="reader">
+<main class="reader" id="main" tabindex="-1">
   <a class="back-link" href="/">&larr; All people</a>
   <header class="person__head">
     {{AVATAR}}
@@ -17,29 +18,33 @@
       <h1 class="person__name">{{NAME}}</h1>
       {{TITLE_LINE}}
       {{EMAIL_LINE}}
-      <div class="person__updated">Profile updated {{UPDATED}}</div>
+      <div class="person__updated">{{UPDATED}}</div>
     </div>
   </header>
+  {{PROVENANCE}}
 
-  <section class="person__section">
-    <h2 class="person__label">Details</h2>
+  <section class="person__section" aria-labelledby="details-h">
+    <h2 class="person__label" id="details-h">Details</h2>
+    <p class="section-note">Self-declared by this person — descriptive text, shown as entered.</p>
     {{DETAILS}}
   </section>
 
-  <section class="person__section">
-    <h2 class="person__label">Direct reports</h2>
+  <section class="person__section" aria-labelledby="reports-h">
+    <h2 class="person__label" id="reports-h">Direct reports</h2>
+    <p class="section-note">Derived from self-declared manager fields — not a confirmed reporting line.</p>
     <ul class="chips">
       {{REPORTS}}
     </ul>
   </section>
 
-  <section class="person__section">
-    <h2 class="person__label">Bio</h2>
+  <section class="person__section" aria-labelledby="bio-h">
+    <h2 class="person__label" id="bio-h">Bio</h2>
     {{BIO}}
   </section>
 
-  <section class="person__section">
-    <h2 class="person__label">Groups</h2>
+  <section class="person__section" aria-labelledby="groups-h">
+    <h2 class="person__label" id="groups-h">Groups</h2>
+    <p class="section-note">Membership is curated by any signed-in member; a role is descriptive text, not permission.</p>
     <ul class="chips">
       {{GROUPS}}
     </ul>

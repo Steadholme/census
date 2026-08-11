@@ -8,43 +8,40 @@
   <style>{{CSS}}</style>
 </head>
 <body class="page-reading">
+<a class="skip-link" href="#main">Skip to the roll</a>
 {{TOPBAR}}
-<main class="reader reader--wide">
+<main class="reader reader--wide" id="main" tabindex="-1">
   <div class="reader__head">
     <div>
+      <p class="reader__eyebrow">The roll</p>
       <h1 class="reader__title">People</h1>
-      <p class="reader__sub">The Steadholme org directory — profiles &amp; groups over Keystone identities.</p>
+      <p class="reader__sub">The estate's people directory — profiles and groups over identity-source records. Details are self-declared; they carry no rank, sign-off, or reporting authority.</p>
     </div>
-    <form class="searchbar searchbar--filters" method="get" action="/">
-      <input type="search" name="q" value="{{QUERY}}" placeholder="Search name, department, group…" aria-label="Search the directory">
-      <select name="dept" aria-label="Filter by department">
-        {{DEPARTMENT_OPTIONS}}
-      </select>
-      <select name="group" aria-label="Filter by group">
-        {{GROUP_OPTIONS}}
-      </select>
+    <form class="searchbar searchbar--filters" method="get" action="/" role="search" aria-label="Filter the roll">
+      <div class="searchbar__field"><label for="filter-q">Search</label><input id="filter-q" type="search" name="q" value="{{QUERY}}" placeholder="Name, department, group…"></div>
+      <div class="searchbar__field"><label for="filter-dept">Department</label><select id="filter-dept" name="dept">{{DEPARTMENT_OPTIONS}}</select></div>
+      <div class="searchbar__field"><label for="filter-group">Group</label><select id="filter-group" name="group">{{GROUP_OPTIONS}}</select></div>
       <button class="btn btn-primary" type="submit">Search</button>
     </form>
   </div>
+  {{BANNER}}
   <div class="directory">
     <div class="directory__main">
       <div class="directory__count">{{COUNT}}</div>
-      <div class="person-list">
-        {{ROWS}}
-      </div>
+      {{BOUNDARY}}
+      <ul class="roll">{{ROWS}}</ul>
     </div>
-    <aside class="directory__aside">
+    <aside class="directory__aside" aria-label="Groups and declared contours">
+      {{LEGEND}}
       <div class="panel">
-        <div class="panel__head"><h2>Groups</h2><a class="panel__link" href="/groups">Manage</a></div>
-        <ul class="grouplist">
-          {{GROUPS}}
-        </ul>
+        <div class="panel__head"><h2>Groups</h2><a class="panel__link" href="/groups">All groups</a></div>
+        <p class="panel__note">Resolved counts include nested groups.</p>
+        <ul class="grouplist">{{GROUPS}}</ul>
       </div>
       <div class="panel org-panel">
-        <div class="panel__head"><h2>Org chart</h2></div>
-        <div class="org-chart">
-          {{ORG_CHART}}
-        </div>
+        <div class="panel__head"><h2>Declared contours</h2></div>
+        <p class="panel__note">Reporting lines as declared by each person — a derived sketch of the current view, not an authority record.</p>
+        <div class="org-chart" role="region" aria-label="Declared contours, scrollable" tabindex="0">{{ORG_CHART}}</div>
       </div>
     </aside>
   </div>

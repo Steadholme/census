@@ -14,8 +14,9 @@
 //!
 //! Endpoints:
 //! - `GET  /healthz`                     liveness (container HEALTHCHECK)
+//! - `GET  /readyz`                      workforce schema readiness
 //! - `GET  /`                            directory: every Keystone identity joined to its profile,
-//!                                       keyword filter, with a groups panel
+//!   keyword filter, with a groups panel
 //! - `GET  /u/{sub}`                     a person page (profile + group memberships)
 //! - `POST /api/profile`                 edit MY OWN profile (sub from X-Auth-Subject), CSRF
 //! - `GET  /groups`                      groups directory + create / membership management
@@ -24,19 +25,29 @@
 //! - `POST /api/groups/{id}/members`     add / remove a member, CSRF
 //! - `POST /api/groups/{id}/children`    add / remove a child group, CSRF
 //! - `GET  /api/people`                  JSON people feed for other services
+//! - `POST /internal/v1/workforce/intake` bearer-authenticated workforce/JML intake
+//! - `PUT  /internal/v1/workforce/records/{subject}` exact subject-bound intake alias
+//! - `GET  /internal/v1/workforce/records/{subject}` current authoritative record
+//! - `GET  /internal/v1/workforce/changes` durable exclusive-cursor JML changefeed
 
 pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod directory;
 pub mod error;
+pub mod fixtures;
 pub mod handlers;
 pub mod markdown;
 pub mod store;
+pub mod workforce;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::body::Body;
+use axum::http::{header, HeaderValue, Request};
+use axum::middleware::{from_fn, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
 
@@ -54,10 +65,22 @@ pub struct AppState {
     pub audit: AuditSink,
 }
 
+async fn private_no_store(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    if !response.headers().contains_key(header::CACHE_CONTROL) {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
 /// Build the router wiring all endpoints onto `state`.
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
+        .route("/readyz", get(handlers::health::readyz))
         .route("/", get(handlers::people::directory))
         .route("/u/{sub}", get(handlers::people::person))
         .route("/api/profile", post(handlers::people::update_profile))
@@ -70,7 +93,20 @@ pub fn app(state: AppState) -> Router {
             post(handlers::groups::child_groups),
         )
         .route("/api/people", get(handlers::api::people_json))
+        .route(
+            "/internal/v1/workforce/intake",
+            post(handlers::workforce::intake),
+        )
+        .route(
+            "/internal/v1/workforce/records/{subject}",
+            get(handlers::workforce::get_record).put(handlers::workforce::put_record),
+        )
+        .route(
+            "/internal/v1/workforce/changes",
+            get(handlers::workforce::changes),
+        )
         .with_state(state)
+        .layer(from_fn(private_no_store))
 }
 
 /// Construct dev state: dev [`Config`], an empty [`InMemoryStore`], an empty [`InMemoryDirectory`],
@@ -92,11 +128,13 @@ pub fn build_dev_state() -> AppState {
 /// - `postgres`: connect `DATABASE_URL`, run the idempotent migration, wire [`PgStore`].
 ///
 /// The directory is the READ-ONLY Keystone view: when `KEYSTONE_DATABASE_URL` is set, a lazily
-/// connected [`PgDirectory`] enumerates real identities (a down shared DB is tolerated as an empty
-/// list, never a startup failure); otherwise an empty [`InMemoryDirectory`] is used (the viewer is
-/// still always merged in by the handlers). The audit sink is enabled by `AUDIT_ENABLED` +
-/// `WATCHTOWER_URL` + `AUDIT_INGEST_TOKEN`. Returns an error string on misconfiguration so `main`
-/// can fail loudly.
+/// connected [`PgDirectory`] enumerates real identities (a down shared DB remains an explicit read
+/// failure rather than masquerading as an empty directory); otherwise an empty
+/// [`InMemoryDirectory`] is used. The audit sink is enabled by `AUDIT_ENABLED` +
+/// `WATCHTOWER_URL` + `AUDIT_INGEST_TOKEN`. Workforce machine endpoints independently require
+/// `CENSUS_WORKFORCE_SERVICE_TOKEN`; when it is absent they fail closed with 503 while ordinary
+/// directory surfaces remain available. Returns an error string on misconfiguration so `main` can
+/// fail loudly.
 pub async fn build_state_from_env() -> Result<AppState, String> {
     let config = Config::from_env();
     let store_kind = env_nonempty("CENSUS_STORE").unwrap_or_else(|| "memory".to_string());

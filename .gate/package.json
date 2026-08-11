@@ -1,0 +1,17 @@
+{
+  "name": "census-browser-gate",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline, synthetic-only browser evidence gate for Census",
+  "scripts": {
+    "gate": "playwright test --config=playwright.config.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "axe-core": "4.12.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

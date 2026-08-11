@@ -8,6 +8,17 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use thiserror::Error;
 
+/// Safe public classification for an authoritative read outage.
+#[derive(Clone, Copy, Debug, Error)]
+pub enum UnavailableKind {
+    #[error("identity source unavailable")]
+    IdentitySource,
+    #[error("profile store unavailable")]
+    ProfileStore,
+    #[error("group store unavailable")]
+    GroupStore,
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     /// Malformed/incomplete form input (empty name, etc.).
@@ -33,6 +44,10 @@ pub enum AppError {
     /// Unexpected internal failure (store I/O).
     #[error("server_error: {0}")]
     Internal(String),
+
+    /// An authoritative read source failed; the classification is safe for display.
+    #[error("unavailable: {0}")]
+    Unavailable(UnavailableKind),
 }
 
 impl AppError {
@@ -43,7 +58,17 @@ impl AppError {
             AppError::Forbidden(d) => (StatusCode::FORBIDDEN, d.clone(), false),
             AppError::NotFound(d) => (StatusCode::NOT_FOUND, d.clone(), false),
             AppError::Conflict(d) => (StatusCode::CONFLICT, d.clone(), false),
-            AppError::Internal(d) => (StatusCode::INTERNAL_SERVER_ERROR, d.clone(), false),
+            AppError::Internal(detail) => {
+                tracing::error!(error = %detail, "census write failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Something went wrong — nothing was saved.".to_string(),
+                    false,
+                )
+            }
+            AppError::Unavailable(kind) => {
+                (StatusCode::SERVICE_UNAVAILABLE, kind.to_string(), false)
+            }
         }
     }
 }
@@ -66,7 +91,9 @@ impl IntoResponse for AppError {
 impl From<crate::store::StoreError> for AppError {
     fn from(e: crate::store::StoreError) -> Self {
         match e {
-            crate::store::StoreError::Conflict(m) => AppError::Conflict(m),
+            crate::store::StoreError::Conflict(_) => {
+                AppError::Conflict("A group with this name already exists.".to_string())
+            }
             crate::store::StoreError::Backend(m) => AppError::Internal(m),
         }
     }

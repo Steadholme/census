@@ -7,9 +7,10 @@
 //! over `KEYSTONE_DATABASE_URL` are interchangeable behind `Arc<dyn Directory>`.
 //!
 //! RESILIENCE: the Keystone pool is built lazily ([`PgPoolOptions::connect_lazy`]) so a down shared
-//! DB never blocks startup; a failed enumeration logs and yields an EMPTY list rather than erroring
-//! the page. The directory page always still renders (the viewer is merged in by the handler).
+//! DB never blocks startup. Read failures remain explicit so handlers can distinguish an outage
+//! from a proven empty directory.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,13 +29,27 @@ pub struct Identity {
     pub email: String,
 }
 
+/// A directory read failure. The inner detail is log-only and must never reach an HTTP body.
+#[derive(Debug, thiserror::Error)]
+pub enum DirectoryError {
+    #[error("directory backend error")]
+    Backend(String),
+}
+
+/// One bounded page from the authoritative identity source.
+#[derive(Clone, Debug)]
+pub struct IdentityPage {
+    pub items: Vec<Identity>,
+    pub overflow: bool,
+}
+
 /// Read-only identity source.
 #[async_trait]
 pub trait Directory: Send + Sync {
-    /// Every known identity (capped). An unreachable source yields an empty list, never an error.
-    async fn list_identities(&self) -> Vec<Identity>;
+    /// Every known identity (capped), plus proof that the cap was crossed.
+    async fn list_identities(&self) -> Result<IdentityPage, DirectoryError>;
     /// One identity by subject, if present.
-    async fn get_identity(&self, sub: &str) -> Option<Identity>;
+    async fn get_identity(&self, sub: &str) -> Result<Option<Identity>, DirectoryError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +61,7 @@ pub trait Directory: Send + Sync {
 #[derive(Default)]
 pub struct InMemoryDirectory {
     identities: Vec<Identity>,
+    disabled_subjects: HashSet<String>,
 }
 
 impl InMemoryDirectory {
@@ -55,20 +71,44 @@ impl InMemoryDirectory {
 
     /// Build a directory over a fixed identity list (tests).
     pub fn with_identities(identities: Vec<Identity>) -> Self {
-        Self { identities }
+        Self {
+            identities,
+            disabled_subjects: HashSet::new(),
+        }
+    }
+
+    /// Test/dev constructor that models Keystone-disabled identities without changing the safe
+    /// public identity DTO.
+    pub fn with_disabled_subjects(
+        identities: Vec<Identity>,
+        disabled_subjects: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            identities,
+            disabled_subjects: disabled_subjects.into_iter().collect(),
+        }
     }
 }
 
 #[async_trait]
 impl Directory for InMemoryDirectory {
-    async fn list_identities(&self) -> Vec<Identity> {
-        let mut v = self.identities.clone();
+    async fn list_identities(&self) -> Result<IdentityPage, DirectoryError> {
+        let mut v: Vec<_> = self
+            .identities
+            .iter()
+            .filter(|identity| !self.disabled_subjects.contains(&identity.sub))
+            .cloned()
+            .collect();
+        let overflow = v.len() > DIRECTORY_LIMIT;
         v.truncate(DIRECTORY_LIMIT);
-        v
+        Ok(IdentityPage { items: v, overflow })
     }
 
-    async fn get_identity(&self, sub: &str) -> Option<Identity> {
-        self.identities.iter().find(|i| i.sub == sub).cloned()
+    async fn get_identity(&self, sub: &str) -> Result<Option<Identity>, DirectoryError> {
+        if self.disabled_subjects.contains(sub) {
+            return Ok(None);
+        }
+        Ok(self.identities.iter().find(|i| i.sub == sub).cloned())
     }
 }
 
@@ -95,23 +135,29 @@ impl PgDirectory {
         Self { pool }
     }
 
-    async fn list_identities_async(&self) -> Result<Vec<Identity>, sqlx::Error> {
-        let rows = sqlx::query("SELECT sub, email FROM users ORDER BY email ASC LIMIT $1")
-            .bind(DIRECTORY_LIMIT as i64)
-            .fetch_all(&self.pool)
-            .await?;
-        rows.iter()
+    async fn list_identities_async(&self) -> Result<IdentityPage, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT sub, email FROM users WHERE disabled = false ORDER BY email ASC LIMIT $1",
+        )
+        .bind(DIRECTORY_LIMIT as i64 + 1)
+        .fetch_all(&self.pool)
+        .await?;
+        let overflow = rows.len() > DIRECTORY_LIMIT;
+        let mut items: Vec<Identity> = rows
+            .iter()
             .map(|r| {
                 Ok(Identity {
                     sub: r.try_get("sub")?,
                     email: r.try_get("email")?,
                 })
             })
-            .collect()
+            .collect::<Result<_, sqlx::Error>>()?;
+        items.truncate(DIRECTORY_LIMIT);
+        Ok(IdentityPage { items, overflow })
     }
 
     async fn get_identity_async(&self, sub: &str) -> Result<Option<Identity>, sqlx::Error> {
-        let row = sqlx::query("SELECT sub, email FROM users WHERE sub = $1")
+        let row = sqlx::query("SELECT sub, email FROM users WHERE sub = $1 AND disabled = false")
             .bind(sub)
             .fetch_optional(&self.pool)
             .await?;
@@ -127,17 +173,17 @@ impl PgDirectory {
 
 #[async_trait]
 impl Directory for PgDirectory {
-    async fn list_identities(&self) -> Vec<Identity> {
-        self.list_identities_async().await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "keystone directory enumeration failed — empty list");
-            Vec::new()
+    async fn list_identities(&self) -> Result<IdentityPage, DirectoryError> {
+        self.list_identities_async().await.map_err(|e| {
+            tracing::warn!(error = %e, "keystone directory enumeration failed");
+            DirectoryError::Backend(e.to_string())
         })
     }
 
-    async fn get_identity(&self, sub: &str) -> Option<Identity> {
-        self.get_identity_async(sub).await.unwrap_or_else(|e| {
+    async fn get_identity(&self, sub: &str) -> Result<Option<Identity>, DirectoryError> {
+        self.get_identity_async(sub).await.map_err(|e| {
             tracing::warn!(error = %e, "keystone identity lookup failed");
-            None
+            DirectoryError::Backend(e.to_string())
         })
     }
 }

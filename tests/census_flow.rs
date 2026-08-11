@@ -43,13 +43,19 @@ async fn directory_and_profile_flow() {
     // --- directory lists the seeded identities -----------------------------
     let (status, body) = call(&state, get("/")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("alice@steadholme.local"), "alice in directory");
+    assert!(
+        body.contains("alice@steadholme.local"),
+        "alice in directory"
+    );
     assert!(body.contains("bob@steadholme.local"), "bob in directory");
 
     // --- keyword filter ----------------------------------------------------
     let (_, body) = call(&state, get("/?q=bob")).await;
     assert!(body.contains("bob@steadholme.local"), "bob matches filter");
-    assert!(!body.contains("alice@steadholme.local"), "alice filtered out");
+    assert!(
+        !body.contains("alice@steadholme.local"),
+        "alice filtered out"
+    );
 
     // --- GET /u/{sub} for self mints a CSRF cookie + edit form -------------
     let resp = app(state.clone())
@@ -398,7 +404,10 @@ async fn groups_and_membership_flow() {
     .await;
     assert!(page.contains("maintainer"), "role shown on group page");
     assert!(page.contains("Platform"), "child group shown");
-    assert!(page.contains("1 resolved"), "recursive member count shown");
+    assert!(
+        page.contains(r#"<span class="num">1</span> resolved"#),
+        "recursive member count shown"
+    );
     let (_, detail) = call(
         &state,
         get_auth(

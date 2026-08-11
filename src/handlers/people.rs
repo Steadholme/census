@@ -17,11 +17,14 @@ use serde::Deserialize;
 use crate::audit::AuditEvent;
 use crate::auth;
 use crate::config::{MAX_BIO_CHARS, MAX_NAME_CHARS, MAX_TITLE_CHARS, MAX_URL_CHARS};
-use crate::directory::Identity;
-use crate::error::AppError;
-use crate::handlers::{app_css, esc, fmt_date, html_with_cookie, initials, redirect, topbar};
+use crate::directory::{DirectoryError, Identity, IdentityPage};
+use crate::error::{AppError, UnavailableKind};
+use crate::handlers::{
+    app_css, esc, fmt_date, html_with_cookie, initials, redirect, render_template, topbar,
+};
 use crate::markdown;
-use crate::store::{recursive_members_of, Group, Profile};
+use crate::store::{recursive_members_of, Group, Page, Profile, StoreError};
+use crate::workforce::WorkforceRecord;
 use crate::{now_secs, AppState};
 
 const DIRECTORY_HTML: &str = include_str!("../../templates/directory.html");
@@ -32,6 +35,43 @@ const PERSON_HTML: &str = include_str!("../../templates/person.html");
 pub struct Person {
     pub identity: Identity,
     pub profile: Profile,
+    pub provenance: Provenance,
+}
+
+/// The source fact behind a rendered person. Enumerated identities are deliberately unmarked.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Provenance {
+    Enumerated,
+    Provisional,
+    ProfileOnly,
+    SubjectOnly,
+}
+
+impl Provenance {
+    pub fn class(self) -> Option<&'static str> {
+        match self {
+            Self::Enumerated => None,
+            Self::Provisional => Some("provisional"),
+            Self::ProfileOnly => Some("profile-only"),
+            Self::SubjectOnly => Some("subject-only"),
+        }
+    }
+}
+
+/// A successful authoritative join, retaining identity-source count and bound truth.
+pub struct Assembled {
+    pub people: Vec<Person>,
+    pub identity_count: usize,
+    pub identity_overflow: bool,
+}
+
+/// A read failure from one of the two authoritative sources used by the people join.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error(transparent)]
+    Identity(#[from] DirectoryError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 impl Person {
@@ -89,42 +129,109 @@ pub struct ProfileForm {
 /// Assemble the people directory: enumerate Keystone identities, merge in the signed-in viewer (so
 /// you can always see + edit yourself even before Keystone enumerates you), and join each to its
 /// stored profile. Sorted by display label. Shared by the directory view and the JSON feed.
-pub async fn assemble_people(state: &AppState, viewer: Option<&Identity>) -> Vec<Person> {
-    let identities = state.directory.list_identities().await;
-    let profiles = state.store.list_profiles().await;
-    let profile_by_sub: HashMap<String, Profile> =
-        profiles.into_iter().map(|p| (p.sub.clone(), p)).collect();
-
-    // De-dup by subject while merging the viewer in.
-    let mut by_sub: HashMap<String, Identity> = HashMap::new();
-    for id in identities {
-        by_sub.insert(id.sub.clone(), id);
+pub async fn assemble_people(
+    state: &AppState,
+    viewer: Option<&Identity>,
+) -> Result<Assembled, ReadError> {
+    let identities = state.directory.list_identities().await?;
+    let profiles = state.store.list_profiles().await?;
+    let workforce = state.store.list_workforce_records().await?;
+    if workforce.overflow {
+        return Err(ReadError::Store(StoreError::Backend(
+            "workforce record bound exceeded".to_string(),
+        )));
     }
-    if let Some(v) = viewer {
-        by_sub.entry(v.sub.clone()).or_insert_with(|| v.clone());
-    }
+    Ok(assemble_pages(identities, profiles, workforce, viewer))
+}
 
-    let mut people: Vec<Person> = by_sub
-        .into_values()
-        .map(|identity| {
-            let profile = profile_by_sub
-                .get(&identity.sub)
-                .cloned()
-                .unwrap_or_else(|| Profile {
-                    sub: identity.sub.clone(),
-                    ..Profile::default()
-                });
-            Person { identity, profile }
-        })
+fn assemble_pages(
+    identities: IdentityPage,
+    profiles: Page<Profile>,
+    workforce: Page<WorkforceRecord>,
+    viewer: Option<&Identity>,
+) -> Assembled {
+    let identity_overflow = identities.overflow;
+    let profile_by_sub: HashMap<String, Profile> = profiles
+        .items
+        .into_iter()
+        .map(|profile| (profile.sub.clone(), profile))
         .collect();
+    let workforce_by_sub: HashMap<String, WorkforceRecord> = workforce
+        .items
+        .into_iter()
+        .map(|record| (record.subject.clone(), record))
+        .collect();
+    let now = now_secs();
 
-    people.sort_by(|a, b| {
-        a.label()
-            .to_lowercase()
-            .cmp(&b.label().to_lowercase())
-            .then_with(|| a.identity.sub.cmp(&b.identity.sub))
-    });
-    people
+    let mut by_sub: HashMap<String, Person> = HashMap::new();
+    for identity in identities.items {
+        let authoritative = workforce_by_sub.get(&identity.sub);
+        if authoritative.is_some_and(|record| {
+            record.effective_at <= now && record.employment_status.suppresses_active_directory()
+        }) {
+            continue;
+        }
+        let mut profile = profile_by_sub
+            .get(&identity.sub)
+            .cloned()
+            .unwrap_or_else(|| Profile {
+                sub: identity.sub.clone(),
+                ..Profile::default()
+            });
+        overlay_authoritative_org(&mut profile, authoritative);
+        by_sub.insert(
+            identity.sub.clone(),
+            Person {
+                identity,
+                profile,
+                provenance: Provenance::Enumerated,
+            },
+        );
+    }
+    if let Some(identity) = viewer {
+        let authoritative = workforce_by_sub.get(&identity.sub);
+        if !authoritative.is_some_and(|record| {
+            record.effective_at <= now && record.employment_status.suppresses_active_directory()
+        }) {
+            by_sub
+                .entry(identity.sub.clone())
+                .or_insert_with(|| Person {
+                    identity: identity.clone(),
+                    profile: {
+                        let mut profile = profile_by_sub
+                            .get(&identity.sub)
+                            .cloned()
+                            .unwrap_or_else(|| Profile {
+                                sub: identity.sub.clone(),
+                                ..Profile::default()
+                            });
+                        overlay_authoritative_org(&mut profile, authoritative);
+                        profile
+                    },
+                    provenance: Provenance::Provisional,
+                });
+        }
+    }
+
+    let mut people: Vec<Person> = by_sub.into_values().collect();
+    people.sort_by_key(|person| (person.label().to_lowercase(), person.identity.sub.clone()));
+    let identity_count = people
+        .iter()
+        .filter(|person| person.provenance == Provenance::Enumerated)
+        .count();
+    Assembled {
+        people,
+        identity_count,
+        identity_overflow,
+    }
+}
+
+fn overlay_authoritative_org(profile: &mut Profile, workforce: Option<&WorkforceRecord>) {
+    let Some(workforce) = workforce else {
+        return;
+    };
+    profile.department = workforce.department.clone();
+    profile.manager_sub = workforce.manager_subject.clone().unwrap_or_default();
 }
 
 /// True when the person matches the keyword across identity, rich profile fields, or group names.
@@ -159,14 +266,86 @@ pub async fn directory(
     let group_filter = query.group.unwrap_or_default();
     let group_filter = group_filter.trim().to_string();
 
-    let people = assemble_people(&state, viewer.as_ref()).await;
-    let total = people.len();
-    let groups = state.store.list_groups().await;
+    let identity_result = state.directory.list_identities().await;
+    let profile_result = state.store.list_profiles().await;
+    let workforce_result = state.store.list_workforce_records().await;
+    let identity_unavailable = identity_result.is_err();
+    let profile_unavailable = profile_result.is_err();
+    let workforce_unavailable = match &workforce_result {
+        Ok(page) => page.overflow,
+        Err(_) => true,
+    };
+    if let Err(error) = &identity_result {
+        tracing::error!(%error, "identity source unavailable on directory");
+    }
+    if let Err(error) = &profile_result {
+        tracing::error!(%error, "profile store unavailable on directory");
+    }
+    match &workforce_result {
+        Err(error) => tracing::error!(%error, "workforce authority unavailable on directory"),
+        Ok(page) if page.overflow => {
+            tracing::error!("workforce record bound exceeded on directory")
+        }
+        Ok(_) => {}
+    }
+    let roll_unavailable = identity_unavailable || workforce_unavailable;
+
+    let (people, total, identity_overflow) = match (
+        identity_result.ok(),
+        profile_result.ok(),
+        workforce_result.ok().filter(|page| !page.overflow),
+    ) {
+        (Some(identities), Some(profiles), Some(workforce)) => {
+            let assembled = assemble_pages(identities, profiles, workforce, viewer.as_ref());
+            (
+                assembled.people,
+                assembled.identity_count,
+                assembled.identity_overflow,
+            )
+        }
+        (Some(identities), None, Some(workforce)) => {
+            let assembled = assemble_pages(
+                identities,
+                Page {
+                    items: Vec::new(),
+                    overflow: false,
+                },
+                workforce,
+                viewer.as_ref(),
+            );
+            (
+                assembled.people,
+                assembled.identity_count,
+                assembled.identity_overflow,
+            )
+        }
+        _ => (Vec::new(), 0, false),
+    };
+
+    let groups_result = state.store.list_groups().await;
+    let mut groups = Vec::new();
+    let mut groups_unavailable = false;
+    match groups_result {
+        Ok(page) => groups = page.items,
+        Err(error) => {
+            tracing::error!(error = %error, "group store unavailable on directory");
+            groups_unavailable = true;
+        }
+    }
 
     let mut group_names_by_sub: HashMap<String, Vec<String>> = HashMap::new();
     let mut members_by_group: HashMap<String, HashSet<String>> = HashMap::new();
     for g in &groups {
-        let members = recursive_members_of(state.store.as_ref(), &g.id).await;
+        let members = match recursive_members_of(state.store.as_ref(), &g.id).await {
+            Ok(members) => members,
+            Err(error) => {
+                tracing::error!(error = %error, group = %g.id, "group membership read failed");
+                groups_unavailable = true;
+                group_names_by_sub.clear();
+                members_by_group.clear();
+                break;
+            }
+        };
         let mut subs = HashSet::new();
         for m in members {
             subs.insert(m.sub.clone());
@@ -194,6 +373,7 @@ pub async fn directory(
 
     let mut rows = String::new();
     let mut shown = 0usize;
+    let mut shown_enumerated = 0usize;
     let mut visible_people = Vec::new();
     for p in &people {
         if !dept_filter_lc.is_empty()
@@ -201,7 +381,8 @@ pub async fn directory(
         {
             continue;
         }
-        if !group_filter.is_empty()
+        if !groups_unavailable
+            && !group_filter.is_empty()
             && !members_by_group
                 .get(&group_filter)
                 .map(|subs| subs.contains(&p.identity.sub))
@@ -217,58 +398,113 @@ pub async fn directory(
             continue;
         }
         shown += 1;
+        if p.provenance == Provenance::Enumerated {
+            shown_enumerated += 1;
+        }
         visible_people.push(p.clone());
-        rows.push_str(&render_person_row(p));
+        rows.push_str(&render_person_row(
+            p,
+            visible_people.len(),
+            viewer.as_ref().map(|item| item.sub.as_str()) == Some(p.identity.sub.as_str()),
+        ));
     }
-    if shown == 0 {
-        rows.push_str(
-            r#"<div class="empty-state"><h2>No people found</h2><p>No directory identity matches your search.</p></div>"#,
-        );
+    if roll_unavailable {
+        rows = r#"<li class="roll__empty">The roll is withheld while an authoritative source is unavailable.</li>"#.to_string();
+    } else if total == 0
+        && needle_lc.is_empty()
+        && dept_filter_lc.is_empty()
+        && group_filter.is_empty()
+    {
+        rows.push_str(r#"<li class="roll__empty">No one else is on the roll yet.</li>"#);
+    } else if shown == 0 {
+        rows.push_str(r#"<li class="roll__empty">No matches</li>"#);
     }
 
     // Groups panel: name + recursive member count, newest activity not tracked so name-ordered.
     let mut group_items = String::new();
-    for g in &groups {
-        let count = members_by_group
-            .get(&g.id)
-            .map(|subs| subs.len())
-            .unwrap_or(0);
-        group_items.push_str(&format!(
+    if groups_unavailable {
+        group_items.push_str(
+            r#"<li class="grouplist__empty section-note">Groups unavailable — membership filters and counts are withheld.</li>"#,
+        );
+    } else {
+        for g in &groups {
+            let count = members_by_group
+                .get(&g.id)
+                .map(|subs| subs.len())
+                .unwrap_or(0);
+            group_items.push_str(&format!(
             r#"<li class="grouplist__item"><a href="/groups/{id}">{name}</a><span class="grouplist__count">{count}</span></li>"#,
             id = esc(&g.id),
             name = esc(&g.name),
             count = count,
         ));
+        }
     }
     if group_items.is_empty() {
         group_items.push_str(r#"<li class="grouplist__empty">No groups yet</li>"#);
     }
 
-    let filters_active =
-        !needle_lc.is_empty() || !dept_filter_lc.is_empty() || !group_filter.is_empty();
-    let count_label = if !filters_active {
-        format!("{total} {}", plural(total, "person", "people"))
+    let filters_active = !needle_lc.is_empty()
+        || !dept_filter_lc.is_empty()
+        || (!groups_unavailable && !group_filter.is_empty());
+    let count_label = if roll_unavailable {
+        "Authoritative source unavailable — roll withheld".to_string()
+    } else if identity_overflow && !filters_active {
+        format!("Showing the first {} people", format_count(total))
+    } else if total == 0 {
+        "0 people enumerated by the identity source".to_string()
+    } else if !filters_active {
+        format!(
+            "{} {} on the roll",
+            format_count(total),
+            plural(total, "person", "people")
+        )
     } else {
-        format!("{shown} of {total} {}", plural(total, "person", "people"))
+        format!(
+            "{} of {} people",
+            format_count(shown_enumerated),
+            format_count(total)
+        )
     };
-    let org_chart = render_org_chart(&visible_people);
+    let org_chart = if roll_unavailable {
+        r#"<p class="section-note">Reporting contours are withheld until authoritative sources return.</p>"#.to_string()
+    } else {
+        render_org_chart(&visible_people)
+    };
+    let banner = render_directory_banner(
+        identity_unavailable,
+        profile_unavailable,
+        workforce_unavailable,
+    );
+    let boundary = if identity_overflow {
+        render_boundary("More people exist than shown — the roll stops at a survey bound of 2,000.")
+    } else {
+        String::new()
+    };
+    let legend = render_legend(&visible_people);
 
-    let body = DIRECTORY_HTML
-        .replace("{{CSS}}", app_css())
-        .replace("{{TOPBAR}}", &topbar("Directory", &email))
-        .replace("{{QUERY}}", &esc(needle.trim()))
-        .replace(
-            "{{DEPARTMENT_OPTIONS}}",
-            &render_department_options(&departments, dept_filter.trim()),
-        )
-        .replace(
-            "{{GROUP_OPTIONS}}",
-            &render_group_options(&groups, &group_filter),
-        )
-        .replace("{{COUNT}}", &esc(&count_label))
-        .replace("{{ROWS}}", &rows)
-        .replace("{{GROUPS}}", &group_items)
-        .replace("{{ORG_CHART}}", &org_chart);
+    let topbar = topbar("Directory", &email);
+    let query = esc(needle.trim());
+    let department_options = render_department_options(&departments, dept_filter.trim());
+    let group_options = render_group_options(&groups, &group_filter, groups_unavailable);
+    let count = esc(&count_label);
+    let body = render_template(
+        DIRECTORY_HTML,
+        &[
+            ("{{CSS}}", app_css()),
+            ("{{TOPBAR}}", &topbar),
+            ("{{BANNER}}", &banner),
+            ("{{BOUNDARY}}", &boundary),
+            ("{{LEGEND}}", &legend),
+            ("{{QUERY}}", &query),
+            ("{{DEPARTMENT_OPTIONS}}", &department_options),
+            ("{{GROUP_OPTIONS}}", &group_options),
+            ("{{COUNT}}", &count),
+            ("{{ROWS}}", &rows),
+            ("{{GROUPS}}", &group_items),
+            ("{{ORG_CHART}}", &org_chart),
+        ],
+    );
     Html(body).into_response()
 }
 
@@ -282,46 +518,62 @@ pub async fn person(
     let email = auth::display_email(&headers);
     let viewer = viewer_identity(&headers);
 
-    // Resolve the identity: prefer the Keystone directory; fall back to the viewer's own header
-    // identity; finally accept a bare subject that has a stored profile (email unknown).
-    let identity = match state.directory.get_identity(&sub).await {
-        Some(id) => id,
-        None => match &viewer {
-            Some(v) if v.sub == sub => v.clone(),
-            _ => {
-                if state.store.get_profile(&sub).await.is_some() {
-                    Identity {
-                        sub: sub.clone(),
-                        email: String::new(),
-                    }
-                } else {
-                    return Err(AppError::NotFound("no such person".to_string()));
-                }
-            }
-        },
-    };
-
-    let profile = state
+    let identity_result = state
+        .directory
+        .get_identity(&sub)
+        .await
+        .map_err(map_identity_unavailable)?;
+    let stored_profile = state
         .store
         .get_profile(&sub)
         .await
-        .unwrap_or_else(|| Profile {
-            sub: sub.clone(),
-            ..Profile::default()
-        });
+        .map_err(map_profile_unavailable)?;
+
+    let (identity, provenance) = match identity_result {
+        Some(identity) => (identity, Provenance::Enumerated),
+        None if viewer.as_ref().map(|item| item.sub.as_str()) == Some(sub.as_str()) => (
+            viewer.clone().expect("viewer branch checked"),
+            Provenance::Provisional,
+        ),
+        None if stored_profile.is_some() => (
+            Identity {
+                sub: sub.clone(),
+                email: String::new(),
+            },
+            Provenance::ProfileOnly,
+        ),
+        None => return Err(AppError::NotFound("no such person".to_string())),
+    };
+
+    let profile = stored_profile.unwrap_or_else(|| Profile {
+        sub: sub.clone(),
+        ..Profile::default()
+    });
 
     let is_self = viewer.as_ref().map(|v| v.sub.as_str()) == Some(sub.as_str());
-    let people = assemble_people(&state, viewer.as_ref()).await;
+    let people = assemble_people(&state, viewer.as_ref())
+        .await
+        .map_err(map_people_unavailable)?
+        .people;
     let label_by_sub: HashMap<String, String> = people
         .iter()
         .map(|p| (p.identity.sub.clone(), p.label()))
         .collect();
 
     // Group memberships, with the group name resolved (skip a dangling edge whose group is gone).
-    let memberships = state.store.groups_of(&sub).await;
+    let memberships = state
+        .store
+        .groups_of(&sub)
+        .await
+        .map_err(map_group_unavailable)?;
     let mut group_html = String::new();
     for m in &memberships {
-        if let Some(g) = state.store.get_group(&m.group_id).await {
+        if let Some(g) = state
+            .store
+            .get_group(&m.group_id)
+            .await
+            .map_err(map_group_unavailable)?
+        {
             group_html.push_str(&format!(
                 r#"<li class="chips__item"><a href="/groups/{gid}">{name}</a><span class="chip-role">{role}</span></li>"#,
                 gid = esc(&g.id),
@@ -337,6 +589,7 @@ pub async fn person(
     let person = Person {
         identity: identity.clone(),
         profile: profile.clone(),
+        provenance,
     };
     let label = person.label();
     let avatar = render_avatar(&profile.avatar_url, &label, "avatar--lg");
@@ -376,20 +629,29 @@ pub async fn person(
         String::new()
     };
 
-    let page = PERSON_HTML
-        .replace("{{CSS}}", app_css())
-        .replace("{{TOPBAR}}", &topbar("Person", &email))
-        .replace("{{NAME_TEXT}}", &esc(&label))
-        .replace("{{AVATAR}}", &avatar)
-        .replace("{{NAME}}", &esc(&label))
-        .replace("{{TITLE_LINE}}", &title_line)
-        .replace("{{EMAIL_LINE}}", &email_line)
-        .replace("{{UPDATED}}", &esc(&fmt_date(profile.updated_at)))
-        .replace("{{DETAILS}}", &details_html)
-        .replace("{{REPORTS}}", &reports_html)
-        .replace("{{BIO}}", &bio_html)
-        .replace("{{GROUPS}}", &group_html)
-        .replace("{{EDIT}}", &edit_block);
+    let topbar = topbar("Person", &email);
+    let name = esc(&label);
+    let updated = esc(&updated_sentence(profile.updated_at));
+    let provenance = render_provenance(provenance);
+    let page = render_template(
+        PERSON_HTML,
+        &[
+            ("{{CSS}}", app_css()),
+            ("{{TOPBAR}}", &topbar),
+            ("{{NAME_TEXT}}", &name),
+            ("{{AVATAR}}", &avatar),
+            ("{{NAME}}", &name),
+            ("{{TITLE_LINE}}", &title_line),
+            ("{{EMAIL_LINE}}", &email_line),
+            ("{{UPDATED}}", &updated),
+            ("{{PROVENANCE}}", &provenance),
+            ("{{DETAILS}}", &details_html),
+            ("{{REPORTS}}", &reports_html),
+            ("{{BIO}}", &bio_html),
+            ("{{GROUPS}}", &group_html),
+            ("{{EDIT}}", &edit_block),
+        ],
+    );
 
     // Only attach the freshly-minted CSRF cookie when we actually rendered the owner form.
     Ok(html_with_cookie(
@@ -407,24 +669,59 @@ pub async fn update_profile(
     let (sub, actor_email) = auth::require_viewer(&headers)?;
     auth::verify_csrf(&headers, &form.csrf_token)?;
 
+    let workforce = state
+        .store
+        .get_workforce_record(&sub)
+        .await
+        .map_err(map_profile_unavailable)?;
+    let authoritative_org = workforce.as_ref();
+    if authoritative_org.is_some_and(|record| {
+        record.effective_at <= now_secs() && record.employment_status.suppresses_active_directory()
+    }) {
+        return Err(AppError::Forbidden(
+            "workforce status does not permit profile updates".to_string(),
+        ));
+    }
+
     let display_name = cap(form.display_name.trim(), MAX_NAME_CHARS);
     let title = cap(form.title.trim(), MAX_TITLE_CHARS);
-    let department = cap(form.department.trim(), MAX_TITLE_CHARS);
-    let manager_sub = cap(form.manager_sub.trim(), MAX_NAME_CHARS);
+    // Department and manager become workforce-owned as soon as the record is effective. A
+    // self-service form may still submit legacy fields, but cannot overwrite those facts.
+    let department = authoritative_org.map_or_else(
+        || cap(form.department.trim(), MAX_TITLE_CHARS),
+        |record| record.department.clone(),
+    );
+    let manager_sub = authoritative_org.map_or_else(
+        || cap(form.manager_sub.trim(), MAX_NAME_CHARS),
+        |record| record.manager_subject.clone().unwrap_or_default(),
+    );
     if manager_sub == sub {
         return Err(AppError::InvalidRequest(
             "manager cannot be the profile owner".to_string(),
         ));
     }
-    if !manager_sub.is_empty() {
+    if authoritative_org.is_none() && !manager_sub.is_empty() {
         let viewer = Identity {
             sub: sub.clone(),
             email: actor_email.clone(),
         };
-        let people = assemble_people(&state, Some(&viewer)).await;
+        let people = assemble_people(&state, Some(&viewer))
+            .await
+            .map_err(map_people_unavailable)?
+            .people;
         let known_manager = people.iter().any(|p| p.identity.sub == manager_sub)
-            || state.directory.get_identity(&manager_sub).await.is_some()
-            || state.store.get_profile(&manager_sub).await.is_some();
+            || state
+                .directory
+                .get_identity(&manager_sub)
+                .await
+                .map_err(map_identity_unavailable)?
+                .is_some()
+            || state
+                .store
+                .get_profile(&manager_sub)
+                .await
+                .map_err(map_profile_unavailable)?
+                .is_some();
         if !known_manager {
             return Err(AppError::InvalidRequest(
                 "manager subject is unknown".to_string(),
@@ -495,15 +792,15 @@ pub fn viewer_identity(headers: &HeaderMap) -> Option<Identity> {
     })
 }
 
-/// One directory row: avatar + name (linking the person page) + title + email + bio excerpt.
-fn render_person_row(p: &Person) -> String {
+/// One ledger row: ordinal, identity, optional profile facts, and exception-only provenance.
+fn render_person_row(p: &Person, ordinal: usize, is_self: bool) -> String {
     let label = p.label();
     let avatar = render_avatar(&p.profile.avatar_url, &label, "avatar--sm");
     let title = if p.profile.title.trim().is_empty() {
         String::new()
     } else {
         format!(
-            r#"<span class="row__title">{}</span>"#,
+            r#"<span class="roll__title">{}</span>"#,
             esc(&p.profile.title)
         )
     };
@@ -511,7 +808,7 @@ fn render_person_row(p: &Person) -> String {
         String::new()
     } else {
         format!(
-            r#"<div class="row__email">{}</div>"#,
+            r#"<span class="roll__email">{}</span>"#,
             esc(&p.identity.email)
         )
     };
@@ -525,39 +822,94 @@ fn render_person_row(p: &Person) -> String {
     let meta = if meta.is_empty() {
         String::new()
     } else {
-        format!(r#"<div class="row__meta">{}</div>"#, esc(&meta.join(" · ")))
+        format!(
+            r#"<span class="roll__meta">{}</span>"#,
+            escape_roll_meta(&meta.join(" · "))
+        )
     };
     let excerpt = markdown::excerpt(&p.profile.bio, 140);
     let bio = if excerpt.is_empty() {
         String::new()
     } else {
-        format!(r#"<p class="row__bio">{}</p>"#, esc(&excerpt))
+        format!(r#"<span class="roll__bio">{}</span>"#, esc(&excerpt))
     };
+    let you = if is_self {
+        r#"<span class="roll__you">(you)</span>"#
+    } else {
+        ""
+    };
+    let provenance = render_prov_tag(p.provenance);
     format!(
-        r#"<a class="person-row" href="/u/{sub}">
+        r#"<li class="roll__row">
+  <a class="roll__entry" href="/u/{sub}">
+  <span class="roll__index" aria-hidden="true">{ordinal:04}</span>
   {avatar}
-  <div class="row__main">
-    <div class="row__head"><span class="row__name">{name}</span>{title}</div>
+  <span class="roll__main">
+    <span class="roll__head"><span class="roll__name">{name}</span>{title}{you}{provenance}</span>
     {email}
     {meta}
     {bio}
-  </div>
-</a>"#,
+  </span>
+  </a>
+</li>"#,
         sub = esc(&p.identity.sub),
+        ordinal = ordinal,
         avatar = avatar,
         name = esc(&label),
         title = title,
+        you = you,
+        provenance = provenance,
         email = email,
         meta = meta,
         bio = bio,
     )
 }
 
+/// Escape directory metadata while adding copy-transparent wrap opportunities to hostile long
+/// runs. Breaks are selected from the raw Unicode scalars before escaping, so an HTML entity can
+/// never be split and multi-byte characters are never sliced between code points.
+fn escape_roll_meta(value: &str) -> String {
+    const BREAK_EVERY_SCALARS: usize = 16;
+
+    let mut html = String::with_capacity(value.len());
+    let mut run_start = 0;
+
+    for (byte_index, ch) in value.char_indices() {
+        if !ch.is_whitespace() {
+            continue;
+        }
+
+        push_escaped_run_with_breaks(
+            &mut html,
+            &value[run_start..byte_index],
+            BREAK_EVERY_SCALARS,
+        );
+        let whitespace_end = byte_index + ch.len_utf8();
+        html.push_str(&esc(&value[byte_index..whitespace_end]));
+        run_start = whitespace_end;
+    }
+
+    push_escaped_run_with_breaks(&mut html, &value[run_start..], BREAK_EVERY_SCALARS);
+    html
+}
+
+fn push_escaped_run_with_breaks(html: &mut String, run: &str, interval: usize) {
+    let mut chunk_start = 0;
+    for (scalar_index, (byte_index, _)) in run.char_indices().enumerate() {
+        if scalar_index > 0 && scalar_index.is_multiple_of(interval) {
+            html.push_str(&esc(&run[chunk_start..byte_index]));
+            html.push_str("<wbr>");
+            chunk_start = byte_index;
+        }
+    }
+    html.push_str(&esc(&run[chunk_start..]));
+}
+
 /// Render an avatar: a sanitized `<img>` when the URL is allowlisted, else an initials glyph.
 fn render_avatar(avatar_url: &str, label: &str, size_class: &str) -> String {
     match markdown::safe_avatar_url(avatar_url) {
         Some(url) => format!(
-            r#"<span class="avatar {size}"><img src="{url}" alt="" loading="lazy"></span>"#,
+            r#"<span class="avatar {size}"><img src="{url}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>"#,
             size = size_class,
             url = esc(&url),
         ),
@@ -569,6 +921,147 @@ fn render_avatar(avatar_url: &str, label: &str, size_class: &str) -> String {
     }
 }
 
+fn render_prov_tag(provenance: Provenance) -> String {
+    provenance.class().map_or_else(String::new, |class| {
+        format!(
+            r#"<span class="prov prov--{class}">{class}</span>"#,
+            class = esc(class),
+        )
+    })
+}
+
+fn render_provenance(provenance: Provenance) -> String {
+    let Some(class) = provenance.class() else {
+        return String::new();
+    };
+    let copy = match provenance {
+        Provenance::Enumerated => return String::new(),
+        Provenance::Provisional => {
+            "Provisional — supplied by the current gateway identity, not enumerated by the identity source."
+        }
+        Provenance::ProfileOnly => {
+            "Profile-only — profile details exist, but the identity source does not enumerate this subject."
+        }
+        Provenance::SubjectOnly => {
+            "Subject-only — a membership names this subject without an identity or profile record."
+        }
+    };
+    format!(
+        r#"<p class="prov-note prov--{class}" role="note">{copy}</p>"#,
+        class = esc(class),
+        copy = esc(copy),
+    )
+}
+
+fn render_legend(people: &[Person]) -> String {
+    let present: HashSet<Provenance> = people
+        .iter()
+        .filter_map(|person| person.provenance.class().map(|_| person.provenance))
+        .collect();
+    if present.is_empty() {
+        return String::new();
+    }
+    let mut items = String::new();
+    for (provenance, copy) in [
+        (
+            Provenance::Provisional,
+            "provisional — current gateway identity, absent from the source roll",
+        ),
+        (
+            Provenance::ProfileOnly,
+            "profile-only — saved profile without a source-roll identity",
+        ),
+        (
+            Provenance::SubjectOnly,
+            "subject-only — membership subject without identity or profile details",
+        ),
+    ] {
+        if present.contains(&provenance) {
+            let class = provenance.class().expect("non-enumerated provenance");
+            items.push_str(&format!(
+                r#"<li class="legend__item"><span class="prov prov--{class}">{class}</span> {copy}</li>"#,
+                class = esc(class),
+                copy = esc(copy),
+            ));
+        }
+    }
+    format!(
+        r#"<section class="legend" aria-label="Provenance legend"><h2 class="legend__title">Source marks</h2><p>Unmarked rows are enumerated by the identity source.</p><ul class="legend__items">{items}</ul></section>"#,
+    )
+}
+
+fn render_boundary(copy: &str) -> String {
+    format!(
+        r#"<p class="bound" role="note"><span class="bound__mark" aria-hidden="true"></span>{}</p>"#,
+        esc(copy),
+    )
+}
+
+fn render_directory_banner(
+    identity_unavailable: bool,
+    profile_unavailable: bool,
+    workforce_unavailable: bool,
+) -> String {
+    let (title, copy) = match (
+        identity_unavailable,
+        profile_unavailable,
+        workforce_unavailable,
+    ) {
+        (_, _, true) => (
+            "Workforce authority unavailable",
+            "The authoritative roll is withheld until workforce state can be verified.",
+        ),
+        (true, true, false) => (
+            "Directory sources unavailable",
+            "Identity and profile reads failed. The roll is withheld rather than presented as empty.",
+        ),
+        (true, false, false) => (
+            "Identity source unavailable",
+            "The authoritative roll is withheld until the identity source returns.",
+        ),
+        (false, true, false) => (
+            "Profiles unavailable",
+            "Identity rows remain visible without profile details; reporting contours are incomplete.",
+        ),
+        (false, false, false) => return String::new(),
+    };
+    format!(
+        r#"<section class="alert alert--down banner" role="status" aria-labelledby="banner-title"><h2 id="banner-title">{title}</h2><p>{copy}</p></section>"#,
+        title = esc(title),
+        copy = esc(copy),
+    )
+}
+
+fn updated_sentence(updated_at: i64) -> String {
+    if updated_at > 0 {
+        format!("Profile updated {}", fmt_date(updated_at))
+    } else {
+        "No profile details saved yet".to_string()
+    }
+}
+
+fn map_identity_unavailable(error: DirectoryError) -> AppError {
+    tracing::error!(error = %error, "identity source read failed");
+    AppError::Unavailable(UnavailableKind::IdentitySource)
+}
+
+fn map_profile_unavailable(error: StoreError) -> AppError {
+    tracing::error!(error = %error, "profile store read failed");
+    AppError::Unavailable(UnavailableKind::ProfileStore)
+}
+
+fn map_group_unavailable(error: StoreError) -> AppError {
+    tracing::error!(error = %error, "group store read failed");
+    AppError::Unavailable(UnavailableKind::GroupStore)
+}
+
+fn map_people_unavailable(error: ReadError) -> AppError {
+    match error {
+        ReadError::Identity(error) => map_identity_unavailable(error),
+        ReadError::Store(error) => map_profile_unavailable(error),
+    }
+}
+
 fn render_department_options(departments: &[String], selected: &str) -> String {
     let mut html = r#"<option value="">All departments</option>"#.to_string();
     for dept in departments {
@@ -577,32 +1070,54 @@ fn render_department_options(departments: &[String], selected: &str) -> String {
         } else {
             ""
         };
+        let visible_department = bounded_option_label(dept);
         html.push_str(&format!(
-            r#"<option value="{value}"{selected}>{label}</option>"#,
+            r#"<option value="{value}" aria-label="{full_department}" title="{full_department}"{selected}>{visible_department}</option>"#,
             value = esc(dept),
+            full_department = esc(dept),
             selected = selected_attr,
-            label = esc(dept),
+            visible_department = esc(&visible_department),
         ));
     }
     html
 }
 
-fn render_group_options(groups: &[Group], selected: &str) -> String {
+fn render_group_options(groups: &[Group], selected: &str, unavailable: bool) -> String {
     let mut html = r#"<option value="">All groups</option>"#.to_string();
+    if unavailable {
+        html.push_str(r#"<option value="" disabled>Groups unavailable</option>"#);
+        return html;
+    }
     for group in groups {
         let selected_attr = if group.id == selected {
             " selected"
         } else {
             ""
         };
+        let visible_name = bounded_option_label(&group.name);
         html.push_str(&format!(
-            r#"<option value="{id}"{selected}>{name}</option>"#,
+            r#"<option value="{id}" aria-label="{full_name}" title="{full_name}"{selected}>{visible_name}</option>"#,
             id = esc(&group.id),
+            full_name = esc(&group.name),
             selected = selected_attr,
-            name = esc(&group.name),
+            visible_name = esc(&visible_name),
         ));
     }
     html
+}
+
+/// Keep native selects intrinsically bounded even when stored labels contain hostile long runs.
+/// The complete escaped label remains available through the option's accessible name and title.
+fn bounded_option_label(label: &str) -> String {
+    const MAX_VISIBLE_CHARS: usize = 16;
+
+    let mut chars = label.chars();
+    let visible: String = chars.by_ref().take(MAX_VISIBLE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{visible}…")
+    } else {
+        visible
+    }
 }
 
 fn render_manager(profile: &Profile, label_by_sub: &HashMap<String, String>) -> String {
@@ -648,7 +1163,7 @@ fn render_direct_reports(sub: &str, people: &[Person]) -> String {
         .iter()
         .filter(|p| p.profile.manager_sub.trim() == sub)
         .collect();
-    reports.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));
+    reports.sort_by_key(|person| person.label().to_lowercase());
     if reports.is_empty() {
         return r#"<li class="chips__empty">No direct reports</li>"#.to_string();
     }
@@ -665,7 +1180,7 @@ fn render_direct_reports(sub: &str, people: &[Person]) -> String {
 
 fn render_org_chart(people: &[Person]) -> String {
     if people.is_empty() {
-        return r#"<div class="grouplist__empty">No people yet</div>"#.to_string();
+        return r#"<p class="grouplist__empty">No one is in this view.</p>"#.to_string();
     }
 
     let index_by_sub: HashMap<String, usize> = people
@@ -688,39 +1203,43 @@ fn render_org_chart(people: &[Person]) -> String {
         }
     }
 
-    roots.sort_by(|a, b| {
-        people[*a]
-            .label()
-            .to_lowercase()
-            .cmp(&people[*b].label().to_lowercase())
-    });
+    roots.sort_by_key(|index| people[*index].label().to_lowercase());
     for group in children.values_mut() {
-        group.sort_by(|a, b| {
-            people[*a]
-                .label()
-                .to_lowercase()
-                .cmp(&people[*b].label().to_lowercase())
-        });
+        group.sort_by_key(|index| people[*index].label().to_lowercase());
     }
 
     let mut seen = HashSet::new();
+    let visible_subs: HashSet<String> = index_by_sub.keys().cloned().collect();
     let mut html = String::new();
     for idx in roots {
-        html.push_str(&render_org_node(idx, people, &children, &mut seen));
+        html.push_str(&render_org_node(
+            idx,
+            people,
+            &children,
+            &visible_subs,
+            &mut seen,
+        ));
     }
     for idx in 0..people.len() {
         if !seen.contains(&people[idx].identity.sub) {
-            html.push_str(&render_org_node(idx, people, &children, &mut seen));
+            html.push_str(&render_org_node(
+                idx,
+                people,
+                &children,
+                &visible_subs,
+                &mut seen,
+            ));
         }
     }
 
-    format!(r#"<ul class="org-tree">{html}</ul>"#)
+    format!(r#"<ul class="org-tree" aria-label="Declared reporting lines">{html}</ul>"#)
 }
 
 fn render_org_node(
     idx: usize,
     people: &[Person],
     children: &HashMap<String, Vec<usize>>,
+    visible_subs: &HashSet<String>,
     seen: &mut HashSet<String>,
 ) -> String {
     let p = &people[idx];
@@ -730,7 +1249,13 @@ fn render_org_node(
     let mut child_html = String::new();
     if let Some(child_indices) = children.get(&p.identity.sub) {
         for child_idx in child_indices {
-            child_html.push_str(&render_org_node(*child_idx, people, children, seen));
+            child_html.push_str(&render_org_node(
+                *child_idx,
+                people,
+                children,
+                visible_subs,
+                seen,
+            ));
         }
     }
     let child_list = if child_html.is_empty() {
@@ -753,11 +1278,19 @@ fn render_org_node(
             esc(&meta.join(" · "))
         )
     };
+    let contour = if !p.profile.manager_sub.trim().is_empty()
+        && !visible_subs.contains(p.profile.manager_sub.trim())
+    {
+        r#"<span class="contour__open">declared manager not shown</span>"#
+    } else {
+        ""
+    };
     format!(
-        r#"<li class="org-node"><div class="org-card"><a href="/u/{sub}">{label}</a>{meta}</div>{children}</li>"#,
+        r#"<li class="org-node"><div class="org-card"><a href="/u/{sub}">{label}</a>{meta}{contour}</div>{children}</li>"#,
         sub = esc(&p.identity.sub),
         label = esc(&p.label()),
         meta = meta,
+        contour = contour,
         children = child_list,
     )
 }
@@ -914,5 +1447,119 @@ fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
         one
     } else {
         many
+    }
+}
+
+fn format_count(value: usize) -> String {
+    let digits = value.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            formatted.push(',');
+        }
+        formatted.push(ch);
+    }
+    formatted
+}
+
+#[cfg(test)]
+mod roll_meta_tests {
+    use super::*;
+
+    #[test]
+    fn row_meta_breaks_hostile_runs_without_changing_text_or_entities() {
+        let department = format!(
+            "{}<script>alert(\"x&y'\")</script>{}",
+            "A".repeat(17),
+            "界".repeat(17)
+        );
+        let location = format!("\u{2067}{}\u{2069}", "א".repeat(33));
+        let person = Person {
+            identity: Identity {
+                sub: "hostile-meta".to_string(),
+                email: String::new(),
+            },
+            profile: Profile {
+                sub: "hostile-meta".to_string(),
+                department: department.clone(),
+                location: location.clone(),
+                ..Profile::default()
+            },
+            provenance: Provenance::Enumerated,
+        };
+
+        let row = render_person_row(&person, 1, false);
+        let meta = row
+            .split_once(r#"<span class="roll__meta">"#)
+            .and_then(|(_, tail)| tail.split_once("</span>"))
+            .map(|(meta, _)| meta)
+            .expect("row metadata span");
+        let visible = format!("{department} · {location}");
+
+        assert!(meta.contains("<wbr>"));
+        assert_eq!(meta.replace("<wbr>", ""), esc(&visible));
+        assert!(!meta.contains("<script>"));
+        assert!(meta.contains("&lt;script&gt;"));
+        for entity in ["&lt;", "&gt;", "&quot;", "&amp;", "&#x27;"] {
+            assert!(
+                meta.contains(entity),
+                "escaped entity remains atomic: {entity}"
+            );
+        }
+
+        let short = "Atlas · München";
+        assert_eq!(escape_roll_meta(short), esc(short));
+        assert!(!escape_roll_meta(short).contains("<wbr>"));
+    }
+
+    #[test]
+    fn group_options_bound_visible_labels_and_preserve_full_accessible_names() {
+        let name = format!("<img src=x> {}", "界".repeat(40));
+        let group = Group {
+            id: "fixture-group-hostile".to_string(),
+            name: name.clone(),
+            description: String::new(),
+            created_at: 0,
+        };
+
+        let html = render_group_options(&[group], "fixture-group-hostile", false);
+        let visible = bounded_option_label(&name);
+
+        assert_eq!(visible.chars().count(), 17);
+        assert!(visible.ends_with('…'));
+        assert!(html.contains(r#"value="fixture-group-hostile""#));
+        assert!(html.contains(r#" selected"#));
+        assert!(html.contains(&format!(r#"aria-label="{}""#, esc(&name))));
+        assert!(html.contains(&format!(r#"title="{}""#, esc(&name))));
+        assert!(html.contains(&format!(">{}</option>", esc(&visible))));
+        assert!(!html.contains("<img src=x>"));
+    }
+
+    #[test]
+    fn department_options_bound_visible_labels_and_preserve_full_value_and_name() {
+        let department = format!("研🧭e\u{301}究部門<&>-Δ🌐 {}", "界".repeat(120));
+        let html = render_department_options(std::slice::from_ref(&department), &department);
+        let visible = bounded_option_label(&department);
+
+        assert_eq!(department.chars().count(), 134);
+        assert_eq!(visible.chars().count(), 17);
+        assert!(visible.ends_with('…'));
+        assert_eq!(
+            visible,
+            format!("{}…", department.chars().take(16).collect::<String>())
+        );
+        assert!(html.contains(&format!(r#"value="{}""#, esc(&department))));
+        assert!(html.contains(r#" selected"#));
+        assert!(html.contains(&format!(r#"aria-label="{}""#, esc(&department))));
+        assert!(html.contains(&format!(r#"title="{}""#, esc(&department))));
+        assert!(html.contains(&format!(">{}</option>", esc(&visible))));
+        assert!(!html.contains("<&>"));
+    }
+
+    #[test]
+    fn bounded_option_label_leaves_short_unicode_labels_unchanged() {
+        for label in ["Atlas", "日本語", "e\u{301}quipe"] {
+            assert_eq!(bounded_option_label(label), label);
+        }
     }
 }

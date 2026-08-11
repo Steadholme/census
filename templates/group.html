@@ -8,13 +8,15 @@
   <style>{{CSS}}</style>
 </head>
 <body class="page-console">
+<a class="skip-link" href="#main">Skip to the group</a>
 {{TOPBAR}}
-<main class="console">
+<main class="console" id="main" tabindex="-1">
   <a class="back-link" href="/groups">&larr; All groups</a>
   <div class="console__head">
     <h1>{{NAME}}</h1>
-    <p class="sub">Created {{CREATED}} · {{DIRECT_COUNT}} direct members · {{RESOLVED_COUNT}} resolved members</p>
+    <p class="sub">Created {{CREATED}} · direct members: {{DIRECT_COUNT}} · resolved members: {{RESOLVED_COUNT}} · curated by every signed-in member</p>
   </div>
+  {{BANNER}}
 
   <section class="card">
     <div class="card__body">
@@ -23,51 +25,37 @@
   </section>
 
   <div class="group-detail-grid">
-    <section class="card">
+    <section class="card" aria-labelledby="direct-h">
       <div class="card__body">
-        <h2 class="edit-card__head">Direct members</h2>
+        <h2 class="edit-card__head" id="direct-h">Direct members</h2>
+        <p class="section-note">Recorded directly on this group — not derived from child groups.</p>
         <ul class="members">{{DIRECT_MEMBERS}}</ul>
-        <form class="member-add" method="post" action="/api/groups/{{GROUP_ID}}/members">
-          <input type="hidden" name="csrf_token" value="{{CSRF}}">
-          <input type="hidden" name="action" value="add">
-          <select name="sub" required aria-label="Person to add">
-            <option value="" disabled selected>Add a person…</option>
-            {{PERSON_OPTIONS}}
-          </select>
-          <input type="text" name="role" maxlength="160" placeholder="role (member)" aria-label="Role">
-          <button class="btn btn-secondary btn-sm" type="submit">Add</button>
-        </form>
+        {{MEMBER_FORM}}
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" aria-labelledby="child-h">
       <div class="card__body">
-        <h2 class="edit-card__head">Child groups</h2>
+        <h2 class="edit-card__head" id="child-h">Child groups</h2>
+        <p class="section-note">Nested groups contribute their members to the resolved list.</p>
         <ul class="members">{{CHILD_GROUPS}}</ul>
-        <form class="member-add" method="post" action="/api/groups/{{GROUP_ID}}/children">
-          <input type="hidden" name="csrf_token" value="{{CSRF}}">
-          <input type="hidden" name="action" value="add">
-          <select name="child_group_id" required aria-label="Child group to add">
-            <option value="" disabled selected>Add a child group…</option>
-            {{CHILD_GROUP_OPTIONS}}
-          </select>
-          <button class="btn btn-secondary btn-sm" type="submit">Add child</button>
-        </form>
+        {{CHILD_FORM}}
       </div>
     </section>
   </div>
 
   <div class="group-detail-grid">
-    <section class="card">
+    <section class="card" aria-labelledby="resolved-h">
       <div class="card__body">
-        <h2 class="edit-card__head">Resolved members</h2>
+        <h2 class="edit-card__head" id="resolved-h">Resolved members</h2>
+        <p class="section-note">Everyone reachable through this group and its child groups — de-duplicated and derived, not a stored list.</p>
         <ul class="members">{{RESOLVED_MEMBERS}}</ul>
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" aria-labelledby="parent-h">
       <div class="card__body">
-        <h2 class="edit-card__head">Parent groups</h2>
+        <h2 class="edit-card__head" id="parent-h">Parent groups</h2>
         <ul class="members">{{PARENT_GROUPS}}</ul>
       </div>
     </section>

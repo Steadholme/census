@@ -9,7 +9,9 @@
 //! no channel, no worker.
 //!
 //! Census emits only the logical fields (actor / action / target / severity / detail): WHO changed
-//! WHICH profile or group WHEN — never a secret. No password hash or credential ever rides an event.
+//! WHICH profile, group, or workforce record WHEN — never a secret. Workforce delivery does not
+//! depend on this sink: the PostgreSQL changefeed is the durable bus. No credential ever rides an
+//! audit event.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -247,7 +249,12 @@ mod tests {
     fn disabled_sink_is_noop_and_never_drops() {
         let sink = AuditSink::disabled();
         for _ in 0..1000 {
-            sink.emit(AuditEvent::info("census.profile.update", "a@b", "u_1", "ok"));
+            sink.emit(AuditEvent::info(
+                "census.profile.update",
+                "a@b",
+                "u_1",
+                "ok",
+            ));
         }
         assert_eq!(sink.dropped(), 0);
     }
@@ -272,7 +279,12 @@ mod tests {
     /// A group-change event serializes to exactly the safe shared fields.
     #[test]
     fn event_serializes_to_shared_fields() {
-        let ev = AuditEvent::notice("census.group.change", "alice@w33d.xyz", "grp_eng", "add u_bob");
+        let ev = AuditEvent::notice(
+            "census.group.change",
+            "alice@w33d.xyz",
+            "grp_eng",
+            "add u_bob",
+        );
         let json = serde_json::to_string(&ev).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
@@ -291,7 +303,12 @@ mod tests {
     async fn emit_never_blocks_when_sink_unreachable() {
         let sink = AuditSink::start(true, "http://127.0.0.1:1/", Some("token"));
         for _ in 0..(QUEUE_CAPACITY * 8) {
-            sink.emit(AuditEvent::notice("census.group.change", "u", "grp_x", "v1"));
+            sink.emit(AuditEvent::notice(
+                "census.group.change",
+                "u",
+                "grp_x",
+                "v1",
+            ));
         }
         assert!(
             sink.dropped() > 0,

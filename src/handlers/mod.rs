@@ -12,6 +12,7 @@ pub mod api;
 pub mod groups;
 pub mod health;
 pub mod people;
+pub mod workforce;
 
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -50,6 +51,35 @@ pub fn esc(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// Replace placeholders found in the template without ever scanning inserted values again.
+///
+/// Chained `str::replace` calls can turn user-controlled text such as `{{ROWS}}` into a later
+/// trusted HTML fragment. This renderer walks only the original template, so replacement values
+/// are opaque bytes and cannot become second-pass template instructions.
+pub fn render_template(template: &str, values: &[(&str, &str)]) -> String {
+    let mut rendered = String::with_capacity(template.len());
+    let mut remaining = template;
+
+    while let Some(offset) = remaining.find("{{") {
+        rendered.push_str(&remaining[..offset]);
+        remaining = &remaining[offset..];
+
+        if let Some((token, value)) = values
+            .iter()
+            .find(|(token, _)| remaining.starts_with(*token))
+        {
+            rendered.push_str(value);
+            remaining = &remaining[token.len()..];
+        } else {
+            rendered.push_str("{{");
+            remaining = &remaining[2..];
+        }
+    }
+
+    rendered.push_str(remaining);
+    rendered
+}
+
 /// Render the shared app-bar: shield + Steadholme wordmark + a page nav on the left; on the right an
 /// "All apps" pill back to the apex portal, the signed-in user chip (avatar initial + email), and a
 /// Logout link to the gateway. A `—`/empty email (unauthenticated or error pages) drops the chip.
@@ -70,6 +100,16 @@ pub fn topbar(page_title: &str, email: &str) -> String {
             email = esc(email),
         )
     };
+    let directory_current = if matches!(page_title, "Directory" | "Person") {
+        r#" aria-current="page""#
+    } else {
+        ""
+    };
+    let groups_current = if matches!(page_title, "Groups" | "Group") {
+        r#" aria-current="page""#
+    } else {
+        ""
+    };
     format!(
         r#"<header class="topbar">
   <div class="topbar__inner">
@@ -78,9 +118,16 @@ pub fn topbar(page_title: &str, email: &str) -> String {
       <span class="brand__word">Steadholme</span>
     </a>
     <nav class="topnav" aria-label="Census sections">
-      <a href="/">Directory</a>
-      <a href="/groups">Groups</a>
+      <a href="/"{directory_current}>Directory</a>
+      <a href="/groups"{groups_current}>Groups</a>
     </nav>
+    <details class="navtoggle">
+      <summary>Menu</summary>
+      <nav class="navtoggle__panel" aria-label="Census sections, compact">
+        <a href="/"{directory_current}>Directory</a>
+        <a href="/groups"{groups_current}>Groups</a>
+      </nav>
+    </details>
     <div class="topbar__right">
       <span class="topbar__title">{title}</span>
       <a class="allapps" href="https://w33d.xyz" title="All apps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>All apps</a>
@@ -91,6 +138,8 @@ pub fn topbar(page_title: &str, email: &str) -> String {
 </header>"#,
         shield = SHIELD_SVG,
         title = esc(page_title),
+        directory_current = directory_current,
+        groups_current = groups_current,
         chip = chip,
         logout = LOGOUT_URL,
     )
@@ -170,14 +219,15 @@ pub fn error_page(status: StatusCode, message: &str) -> String {
     let code = status.as_u16();
     let reason = status.canonical_reason().unwrap_or("Error");
     format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>{code} {reason} · Census</title><style>{css}</style></head>
 <body class="page-reading">
+<a class="skip-link" href="#main">Skip to main content</a>
 {topbar}
-<main class="reader">
+<main class="reader" id="main" tabindex="-1">
   <div class="error-card">
     <div class="error-card__code">{code}</div>
     <h1 class="error-card__title">{reason}</h1>
@@ -185,11 +235,41 @@ pub fn error_page(status: StatusCode, message: &str) -> String {
     <a class="btn btn-primary" href="/">Back to the directory</a>
   </div>
 </main>
-</body></html>"#,
+</body></html>"##,
         css = app_css(),
         topbar = topbar("Census", "—"),
         code = code,
         reason = esc(reason),
         msg = esc(message),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_template;
+
+    #[test]
+    fn inserted_marker_text_is_never_reprocessed() {
+        let rendered = render_template(
+            "first={{FIRST}}; second={{SECOND}}; again={{FIRST}}",
+            &[
+                ("{{FIRST}}", "{{SECOND}}<b>literal</b>"),
+                ("{{SECOND}}", "trusted"),
+            ],
+        );
+
+        assert_eq!(
+            rendered,
+            "first={{SECOND}}<b>literal</b>; second=trusted; again={{SECOND}}<b>literal</b>"
+        );
+    }
+
+    #[test]
+    fn unknown_template_markers_remain_literal() {
+        let rendered = render_template(
+            "known={{KNOWN}} unknown={{UNKNOWN}}",
+            &[("{{KNOWN}}", "ok")],
+        );
+        assert_eq!(rendered, "known=ok unknown={{UNKNOWN}}");
+    }
 }

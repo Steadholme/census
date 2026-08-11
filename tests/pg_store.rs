@@ -52,20 +52,34 @@ async fn pg_store_full_integration() {
         updated_at: now,
     };
     pg.upsert_profile(&profile).await.expect("insert profile");
-    let fetched = pg.get_profile("u_alice").await.expect("fetch profile");
+    let fetched = pg
+        .get_profile("u_alice")
+        .await
+        .expect("read profile")
+        .expect("fetch profile");
     assert_eq!(fetched.display_name, "Alice");
 
     profile.display_name = "Alice A.".to_string();
     profile.title = "Staff Engineer".to_string();
     profile.updated_at = now + 1;
     pg.upsert_profile(&profile).await.expect("update profile");
-    let refetched = pg.get_profile("u_alice").await.expect("refetch");
+    let refetched = pg
+        .get_profile("u_alice")
+        .await
+        .expect("read updated profile")
+        .expect("refetch");
     assert_eq!(refetched.display_name, "Alice A.");
     assert_eq!(refetched.title, "Staff Engineer");
     assert_eq!(refetched.department, "Engineering");
     assert_eq!(refetched.location, "New York");
     assert_eq!(refetched.locale, "en");
-    assert!(pg.list_profiles().await.iter().any(|p| p.sub == "u_alice"));
+    assert!(pg
+        .list_profiles()
+        .await
+        .expect("list profiles")
+        .items
+        .iter()
+        .any(|p| p.sub == "u_alice"));
 
     // --- groups: create + unique-name conflict -----------------------------
     let group = Group {
@@ -86,10 +100,20 @@ async fn pg_store_full_integration() {
         "duplicate group name rejected"
     );
     assert_eq!(
-        pg.get_group("grp_eng").await.expect("get group").name,
+        pg.get_group("grp_eng")
+            .await
+            .expect("read group")
+            .expect("get group")
+            .name,
         "Engineering"
     );
-    assert!(pg.list_groups().await.iter().any(|g| g.id == "grp_eng"));
+    assert!(pg
+        .list_groups()
+        .await
+        .expect("list groups")
+        .items
+        .iter()
+        .any(|g| g.id == "grp_eng"));
 
     let child_group = Group {
         id: "grp_platform".to_string(),
@@ -106,8 +130,20 @@ async fn pg_store_full_integration() {
         added_at: now,
     };
     pg.add_group_child(&edge).await.expect("add child group");
-    assert_eq!(pg.child_groups_of("grp_eng").await.len(), 1);
-    assert_eq!(pg.parent_groups_of("grp_platform").await.len(), 1);
+    assert_eq!(
+        pg.child_groups_of("grp_eng")
+            .await
+            .expect("list child groups")
+            .len(),
+        1
+    );
+    assert_eq!(
+        pg.parent_groups_of("grp_platform")
+            .await
+            .expect("list parent groups")
+            .len(),
+        1
+    );
 
     // --- memberships: add (idempotent re-role), list both ways, remove -----
     let m = Membership {
@@ -124,23 +160,48 @@ async fn pg_store_full_integration() {
     };
     pg.add_member(&m2).await.expect("re-role member");
 
-    let members = pg.members_of("grp_eng").await;
+    let members = pg.members_of("grp_eng").await.expect("list members");
     assert_eq!(members.len(), 1, "idempotent on (group_id, sub)");
     assert_eq!(members[0].role, "maintainer", "role updated in place");
 
-    let groups_of = pg.groups_of("u_alice").await;
+    let groups_of = pg.groups_of("u_alice").await.expect("list memberships");
     assert_eq!(groups_of.len(), 1);
     assert_eq!(groups_of[0].group_id, "grp_eng");
 
     pg.remove_member("grp_eng", "u_alice")
         .await
         .expect("remove member");
-    assert!(pg.members_of("grp_eng").await.is_empty(), "member removed");
-    assert!(pg.groups_of("u_alice").await.is_empty());
+    assert!(
+        pg.members_of("grp_eng")
+            .await
+            .expect("list removed members")
+            .is_empty(),
+        "member removed"
+    );
+    assert!(pg
+        .groups_of("u_alice")
+        .await
+        .expect("list removed memberships")
+        .is_empty());
     pg.remove_group_child("grp_eng", "grp_platform")
         .await
         .expect("remove child group");
-    assert!(pg.child_groups_of("grp_eng").await.is_empty());
+    assert!(pg
+        .child_groups_of("grp_eng")
+        .await
+        .expect("list removed child groups")
+        .is_empty());
+
+    // A failed real pool remains an error; it must never collapse to an empty healthy page.
+    let closed_pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("connect pool for read-failure proof");
+    let closed_store = PgStore::from_pool(closed_pool.clone());
+    closed_pool.close().await;
+    assert!(
+        closed_store.list_profiles().await.is_err(),
+        "closed Postgres pool surfaces a read error"
+    );
 
     println!(
         "PG STORE INTEGRATION OK: migrate (idempotent) + profile upsert/get/list + group \
