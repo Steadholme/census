@@ -4,7 +4,7 @@
 //! and the profile edit; `groups` carries the groups directory + create/membership management;
 //! `api` serves the machine JSON people feed.
 //!
-//! The shared design tokens / CSS are embedded (via `include_str!`) and inlined into every page,
+//! The shared design tokens / CSS are embedded (via `include_str!`) and served as one immutable asset,
 //! matching the Steadholme enterprise brand (the same look as the Keystone login UI): brand gradient,
 //! indigo accent, cards, app-bar.
 
@@ -21,10 +21,13 @@ use std::sync::OnceLock;
 
 /// Census-only CSS layered after Odyssey's canonical font, tokens, and components.
 pub const SERVICE_CSS: &str = include_str!("../../static/service.css");
+const ERROR_HTML: &str = include_str!("../../templates/error.html");
+
+pub const APP_CSS_PATH: &str = "/assets/census-20260908.css";
 
 static APP_CSS: OnceLock<String> = OnceLock::new();
 
-/// Embedded design system, inlined into each rendered page's `<style>`.
+/// Embedded design system served by the stylesheet endpoint.
 pub fn app_css() -> &'static str {
     APP_CSS
         .get_or_init(|| {
@@ -36,11 +39,26 @@ pub fn app_css() -> &'static str {
         .as_str()
 }
 
+pub async fn app_css_asset() -> Response {
+    let mut response = app_css().into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/css; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
 /// Cross-subdomain gateway logout (Census lives at people.w33d.xyz; the IdP is at id.w33d.xyz).
 pub const LOGOUT_URL: &str = "https://sso.w33d.xyz/_gw/auth/logout";
-
-/// The Steadholme shield glyph (small, for the app-bar brand lockup).
-pub const SHIELD_SVG: &str = r##"<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="hf-shield-sm" x1="8" y1="4" x2="40" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#818CF8"/><stop offset="1" stop-color="#4F46E5"/></linearGradient></defs><path d="M24 4 8 9.5V22c0 11 7 17.4 16 21.5C33 39.4 40 33 40 22V9.5L24 4Z" fill="url(#hf-shield-sm)"/><rect x="20" y="19" width="8" height="13" rx="1" fill="#fff" fill-opacity="0.92"/><path d="M20 19v-2.5a4 4 0 0 1 8 0V19" stroke="#fff" stroke-width="2" stroke-opacity="0.92" fill="none"/></svg>"##;
 
 /// Minimal HTML escaping for text/attribute interpolation (defense-in-depth on every field).
 pub fn esc(s: &str) -> String {
@@ -78,71 +96,6 @@ pub fn render_template(template: &str, values: &[(&str, &str)]) -> String {
 
     rendered.push_str(remaining);
     rendered
-}
-
-/// Render the shared app-bar: shield + Steadholme wordmark + a page nav on the left; on the right an
-/// "All apps" pill back to the apex portal, the signed-in user chip (avatar initial + email), and a
-/// Logout link to the gateway. A `—`/empty email (unauthenticated or error pages) drops the chip.
-pub fn topbar(page_title: &str, email: &str) -> String {
-    // The user chip only renders for a known gateway identity; public/error chrome keeps the
-    // "All apps" pill + logout but shows no avatar.
-    let chip = if email.is_empty() || email == "—" {
-        String::new()
-    } else {
-        let initial = email
-            .chars()
-            .next()
-            .map(|c| c.to_uppercase().to_string())
-            .unwrap_or_else(|| "H".to_string());
-        format!(
-            r#"<span class="userchip"><span class="userchip__avatar" aria-hidden="true">{initial}</span><span class="user-email">{email}</span></span>"#,
-            initial = esc(&initial),
-            email = esc(email),
-        )
-    };
-    let directory_current = if matches!(page_title, "Directory" | "Person") {
-        r#" aria-current="page""#
-    } else {
-        ""
-    };
-    let groups_current = if matches!(page_title, "Groups" | "Group") {
-        r#" aria-current="page""#
-    } else {
-        ""
-    };
-    format!(
-        r#"<header class="topbar">
-  <div class="topbar__inner">
-    <a class="brand" href="/" aria-label="Steadholme Census">
-      <span class="brand__glyph" aria-hidden="true">{shield}</span>
-      <span class="brand__word">Steadholme</span>
-    </a>
-    <nav class="topnav" aria-label="Census sections">
-      <a href="/"{directory_current}>Directory</a>
-      <a href="/groups"{groups_current}>Groups</a>
-    </nav>
-    <details class="navtoggle">
-      <summary>Menu</summary>
-      <nav class="navtoggle__panel" aria-label="Census sections, compact">
-        <a href="/"{directory_current}>Directory</a>
-        <a href="/groups"{groups_current}>Groups</a>
-      </nav>
-    </details>
-    <div class="topbar__right">
-      <span class="topbar__title">{title}</span>
-      <a class="allapps" href="https://w33d.xyz" title="All apps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>All apps</a>
-      {chip}
-      <a class="btn btn-ghost btn-sm" href="{logout}">Log out</a>
-    </div>
-  </div>
-</header>"#,
-        shield = SHIELD_SVG,
-        title = esc(page_title),
-        directory_current = directory_current,
-        groups_current = groups_current,
-        chip = chip,
-        logout = LOGOUT_URL,
-    )
 }
 
 /// Compute a stable initials glyph (1–2 chars) for an avatar fallback. Takes the best available
@@ -214,34 +167,112 @@ pub fn html_with_cookie(body: String, set_cookie: Option<String>) -> Response {
     resp
 }
 
-/// A small, branded HTML error page (used by [`crate::error::AppError`]).
-pub fn error_page(status: StatusCode, message: &str) -> String {
-    let code = status.as_u16();
-    let reason = status.canonical_reason().unwrap_or("Error");
+/// Icons used across the console chrome (inline so no asset request is needed).
+pub const ICON_MARK: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>"##;
+pub const ICON_GRID: &str = r##"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>"##;
+
+/// The console pages, in app-bar order.
+pub const NAV: [(&str, &str); 2] = [("/", "People"), ("/groups", "Groups")];
+
+/// Render the app bar: brand lockup + host + page pills; All apps, identity and Log out.
+pub fn app_bar(active: &str, email: Option<&str>) -> String {
+    let mut pills = String::new();
+    for (href, label) in NAV {
+        pills.push_str(&format!(
+            r#"<a class="surf{state}" href="{href}"{aria}>{label}</a>"#,
+            state = if href == active { " is-active" } else { "" },
+            href = href,
+            aria = if href == active {
+                r#" aria-current="page""#
+            } else {
+                ""
+            },
+            label = label,
+        ));
+    }
+    let chip = match email {
+        Some(value) if !value.is_empty() && value != "—" => {
+            let initial = value
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "S".to_string());
+            format!(
+                r#"<span class="userchip"><span class="userchip__avatar" aria-hidden="true">{initial}</span><span class="user-email">{email}</span></span>"#,
+                initial = esc(&initial),
+                email = esc(value),
+            )
+        }
+        _ => {
+            r#"<span class="user-email user-email--none">— (no gateway session)</span>"#.to_string()
+        }
+    };
     format!(
-        r##"<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>{code} {reason} · Census</title><style>{css}</style></head>
-<body class="page-reading">
-<a class="skip-link" href="#main">Skip to main content</a>
-{topbar}
-<main class="reader" id="main" tabindex="-1">
-  <div class="error-card">
-    <div class="error-card__code">{code}</div>
-    <h1 class="error-card__title">{reason}</h1>
-    <p class="error-card__msg">{msg}</p>
-    <a class="btn btn-primary" href="/">Back to the directory</a>
+        r#"<header class="suitebar">
+  <a class="suitebar__brand" href="/">
+    <span class="brand-tile" aria-hidden="true">{mark}</span>
+    <span class="suitebar__name"><b>Steadholme</b><span>People directory</span></span>
+  </a>
+  <span class="suitebar__host">people.w33d.xyz</span>
+  <nav class="surfaces" aria-label="Census pages">{pills}</nav>
+  <span class="suitebar__spacer"></span>
+  <div class="suitebar__right">
+    <a class="allapps" href="https://w33d.xyz">{grid}<span>All apps</span></a>
+    {chip}
+    <a class="btn btn-ghost btn-sm" href="{logout}">Log out</a>
   </div>
-</main>
-</body></html>"##,
-        css = app_css(),
-        topbar = topbar("Census", "—"),
-        code = code,
-        reason = esc(reason),
-        msg = esc(message),
+</header>"#,
+        mark = ICON_MARK,
+        pills = pills,
+        grid = ICON_GRID,
+        chip = chip,
+        logout = LOGOUT_URL,
     )
+}
+
+/// The shared page footer.
+pub const FOOTER: &str = r##"<footer class="v2-foot">
+  <span class="v2-foot__lead">Steadholme · Census · people.w33d.xyz</span>
+  <a href="https://status.w33d.xyz">Status</a>
+  <a href="https://access.w33d.xyz">Access</a>
+  <a href="https://w33d.xyz">All apps</a>
+</footer>"##;
+
+/// Resolve the viewer's theme from the cookie header.
+pub fn theme_of(headers: &axum::http::HeaderMap) -> &'static str {
+    odyssey::resolve_theme(
+        headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok()),
+    )
+}
+
+/// Fill a page template's chrome placeholders: theme attributes, stylesheet, footer, app bar.
+///
+/// The app bar carries the one caller-supplied value in the chrome (the signed-in email), so it is
+/// substituted last: no later `replace` pass can re-scan it and treat a `{{MARKER}}` inside an
+/// address as a template instruction.
+pub fn shell(template: &str, active: &str, theme: &str, email: Option<&str>) -> String {
+    template
+        .replace("{{THEME_ATTR}}", odyssey::html_theme_attr(theme))
+        .replace("{{COLOR_SCHEME}}", odyssey::color_scheme_meta(theme))
+        .replace("{{CSS_PATH}}", APP_CSS_PATH)
+        .replace("{{FOOTER}}", FOOTER)
+        .replace("{{APPBAR}}", &app_bar(active, email))
+}
+
+/// Render the branded error document as one status tile.
+pub fn error_page(status: StatusCode, message: &str) -> String {
+    let reason = status.canonical_reason().unwrap_or("Error");
+    ERROR_HTML
+        .replace("{{THEME_ATTR}}", "")
+        .replace("{{COLOR_SCHEME}}", "light dark")
+        .replace("{{CSS_PATH}}", APP_CSS_PATH)
+        .replace("{{APPBAR}}", &app_bar("/", None))
+        .replace("{{FOOTER}}", FOOTER)
+        .replace("{{STATUS}}", &status.as_u16().to_string())
+        .replace("{{HEADING}}", &esc(reason))
+        .replace("{{MESSAGE}}", &esc(message))
 }
 
 #[cfg(test)]

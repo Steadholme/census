@@ -19,7 +19,7 @@ use crate::config::{MAX_NAME_CHARS, MAX_TITLE_CHARS};
 use crate::error::{AppError, UnavailableKind};
 use crate::handlers::people::{assemble_people, viewer_identity, Person, Provenance, ReadError};
 use crate::handlers::{
-    app_css, esc, fmt_date, html_with_cookie, redirect, render_template, topbar,
+    esc, fmt_date, html_with_cookie, redirect, render_template, shell, theme_of,
 };
 use crate::store::{
     recursive_members_of, would_create_group_cycle, Group, GroupChild, Membership, Profile,
@@ -167,13 +167,10 @@ pub async fn groups_page(
         String::new()
     };
     let create_form = render_create_form(&csrf, can_mutate);
-    let topbar = topbar("Groups", &email);
     let csrf = esc(&csrf);
     let body = render_template(
-        GROUPS_HTML,
+        &shell(GROUPS_HTML, "/groups", theme_of(&headers), Some(&email)),
         &[
-            ("{{CSS}}", app_css()),
-            ("{{TOPBAR}}", &topbar),
             ("{{BANNER}}", &banner),
             ("{{BOUNDARY}}", &boundary),
             ("{{CREATE_FORM}}", &create_form),
@@ -251,7 +248,6 @@ pub async fn group_detail(
     } else {
         format!(r#"<p class="group__desc">{}</p>"#, esc(&group.description))
     };
-    let topbar = topbar("Group", &email);
     let csrf = esc(&csrf);
     let group_id = esc(&group.id);
     let group_name = esc(&group.name);
@@ -260,10 +256,8 @@ pub async fn group_detail(
     let resolved_count = format_count(resolved_members.len());
     let child_group_options = render_child_group_options(&groups, &group.id);
     let body = render_template(
-        GROUP_HTML,
+        &shell(GROUP_HTML, "/groups", theme_of(&headers), Some(&email)),
         &[
-            ("{{CSS}}", app_css()),
-            ("{{TOPBAR}}", &topbar),
             ("{{BANNER}}", &banner),
             ("{{MEMBER_FORM}}", &member_form),
             ("{{CHILD_FORM}}", &child_form),
@@ -565,6 +559,10 @@ fn group_store_unavailable(error: StoreError) -> AppError {
     AppError::Unavailable(UnavailableKind::GroupStore)
 }
 
+/// One card in the groups grid: name, counts, description, and the member avatar strip.
+///
+/// The grid is a browse surface — membership editing (add, remove, link a child group) lives on
+/// the group page the name links to, so a card carries no form and no duplicate control.
 fn render_group_card(
     group: &Group,
     members: &[Membership],
@@ -573,10 +571,7 @@ fn render_group_card(
     context: &RenderContext<'_>,
     provenance: &mut ProvenanceFlags,
 ) -> String {
-    let member_rows = render_member_list(members, group, true, context, provenance);
-    let child_rows = render_child_group_list(child_edges, group, true, context);
-    let member_form = render_member_form(group, context);
-    let child_form = render_child_form(group, context);
+    let avatars = render_member_avatars(members, context, provenance);
     let description = if group.description.trim().is_empty() {
         String::new()
     } else {
@@ -591,12 +586,7 @@ fn render_group_card(
       <span class="group__meta"><span class="num">{direct}</span> direct · <span class="num">{resolved}</span> resolved · <span class="num">{child_count}</span> {child_word} · created {created}</span>
     </div>
     {description}
-    <h3 class="group__subhead">Direct members</h3>
-    <ul class="members">{member_rows}</ul>
-    {member_form}
-    <h3 class="group__subhead">Child groups</h3>
-    <ul class="members">{child_rows}</ul>
-    {child_form}
+    {avatars}
   </div>
 </section>"#,
         id = esc(&group.id),
@@ -606,7 +596,43 @@ fn render_group_card(
         child_count = format_count(child_edges.len()),
         child_word = plural(child_edges.len(), "child group", "child groups"),
         created = esc(&fmt_date(group.created_at)),
+        description = description,
+        avatars = avatars,
     )
+}
+
+/// The direct-member avatar strip on a group card. Each initials tile names the member for a
+/// screen reader and on hover; beyond six the strip states the remainder rather than growing.
+fn render_member_avatars(
+    members: &[Membership],
+    context: &RenderContext<'_>,
+    provenance_flags: &mut ProvenanceFlags,
+) -> String {
+    if members.is_empty() {
+        return r#"<p class="group-card__none">No members yet</p>"#.to_string();
+    }
+    const SHOWN: usize = 6;
+    let mut html = String::from(r#"<ul class="facepile">"#);
+    for m in members.iter().take(SHOWN) {
+        let (name, provenance) = member_display(context.people, &m.sub);
+        if let Some(value) = provenance {
+            provenance_flags.note(value);
+        }
+        html.push_str(&format!(
+            r#"<li class="facepile__item"><a class="avatar avatar--sm" href="/u/{sub}" title="{name}"><span aria-hidden="true">{init}</span><span class="sr-only">{name}</span></a></li>"#,
+            sub = esc(&m.sub),
+            name = esc(&name),
+            init = esc(&crate::handlers::initials(&name)),
+        ));
+    }
+    if members.len() > SHOWN {
+        html.push_str(&format!(
+            r#"<li class="facepile__item facepile__more">+{}</li>"#,
+            members.len() - SHOWN
+        ));
+    }
+    html.push_str("</ul>");
+    html
 }
 
 fn render_member_list(

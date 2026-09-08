@@ -1,65 +1,76 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{{THEME_ATTR}}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="{{COLOR_SCHEME}}">
   <title>{{NAME}} · Groups · Census</title>
-  <style>{{CSS}}</style>
+  <link rel="stylesheet" href="{{CSS_PATH}}">
 </head>
-<body class="page-console">
+<body class="page-v2">
 <a class="skip-link" href="#main">Skip to the group</a>
-{{TOPBAR}}
-<main class="console" id="main" tabindex="-1">
-  <a class="back-link" href="/groups">&larr; All groups</a>
-  <div class="console__head">
-    <h1>{{NAME}}</h1>
-    <p class="sub">Created {{CREATED}} · direct members: {{DIRECT_COUNT}} · resolved members: {{RESOLVED_COUNT}} · curated by every signed-in member</p>
+{{APPBAR}}
+<main class="v2-page" id="main" tabindex="-1">
+  <nav class="crumb" aria-label="Breadcrumb">
+    <a class="back-link" href="/groups">Groups</a>
+    <span class="crumb__sep" aria-hidden="true">/</span>
+    <span aria-current="page">{{NAME}}</span>
+  </nav>
+  <div class="pagehead">
+    <div class="pagehead__titles">
+      <h1>{{NAME}}</h1>
+      <p class="pagehead__sub">created {{CREATED}} · <span class="num">{{DIRECT_COUNT}}</span> direct · <span class="num">{{RESOLVED_COUNT}}</span> resolved</p>
+    </div>
   </div>
   {{BANNER}}
 
-  <section class="card">
-    <div class="card__body">
+  <section class="card" aria-labelledby="description-h">
+    <div class="card__head"><h2 id="description-h">Description</h2></div>
+    <div class="card__pad">
       {{DESCRIPTION}}
     </div>
   </section>
 
   <div class="group-detail-grid">
     <section class="card" aria-labelledby="direct-h">
-      <div class="card__body">
-        <h2 class="edit-card__head" id="direct-h">Direct members</h2>
-        <p class="section-note">Recorded directly on this group — not derived from child groups.</p>
-        <ul class="members">{{DIRECT_MEMBERS}}</ul>
-        {{MEMBER_FORM}}
-      </div>
+      <div class="card__head"><h2 id="direct-h">Direct members</h2><span class="card__count">{{DIRECT_COUNT}}</span></div>
+      <ul class="members">{{DIRECT_MEMBERS}}</ul>
+      {{MEMBER_FORM}}
+      <p class="card__caption card__caption--foot">Recorded directly on this group — not derived from child groups.</p>
     </section>
 
     <section class="card" aria-labelledby="child-h">
-      <div class="card__body">
-        <h2 class="edit-card__head" id="child-h">Child groups</h2>
-        <p class="section-note">Nested groups contribute their members to the resolved list.</p>
-        <ul class="members">{{CHILD_GROUPS}}</ul>
-        {{CHILD_FORM}}
-      </div>
+      <div class="card__head"><h2 id="child-h">Child groups</h2></div>
+      <ul class="members">{{CHILD_GROUPS}}</ul>
+      {{CHILD_FORM}}
+      <p class="card__caption card__caption--foot">Nested groups contribute their members to the resolved list.</p>
     </section>
   </div>
 
   <div class="group-detail-grid">
     <section class="card" aria-labelledby="resolved-h">
-      <div class="card__body">
-        <h2 class="edit-card__head" id="resolved-h">Resolved members</h2>
-        <p class="section-note">Everyone reachable through this group and its child groups — de-duplicated and derived, not a stored list.</p>
-        <ul class="members">{{RESOLVED_MEMBERS}}</ul>
-      </div>
+      <div class="card__head"><h2 id="resolved-h">Resolved members</h2><span class="card__count">{{RESOLVED_COUNT}}</span></div>
+      <ul class="members">{{RESOLVED_MEMBERS}}</ul>
+      <p class="card__caption card__caption--foot">Everyone reachable through this group and its child groups — de-duplicated and derived, not a stored list.</p>
     </section>
 
     <section class="card" aria-labelledby="parent-h">
-      <div class="card__body">
-        <h2 class="edit-card__head" id="parent-h">Parent groups</h2>
-        <ul class="members">{{PARENT_GROUPS}}</ul>
-      </div>
+      <div class="card__head"><h2 id="parent-h">Parent groups</h2></div>
+      <ul class="members">{{PARENT_GROUPS}}</ul>
     </section>
   </div>
+
+  <section class="card" aria-labelledby="facts-h">
+    <div class="card__head"><h2 id="facts-h">Group</h2></div>
+    <dl class="defs">
+      <div class="defs__row"><dt class="defs__term">Curated by</dt><dd class="defs__value">any signed-in member</dd></div>
+      <div class="defs__row"><dt class="defs__term">Joining grants</dt><dd class="defs__value">no permission</dd></div>
+      <div class="defs__row"><dt class="defs__term">Role</dt><dd class="defs__value">descriptive text</dd></div>
+      <div class="defs__row"><dt class="defs__term">Audit</dt><dd class="defs__value">best-effort · estate audit log</dd></div>
+      <div class="defs__row"><dt class="defs__term">Created</dt><dd class="defs__value">{{CREATED}}</dd></div>
+    </dl>
+  </section>
+{{FOOTER}}
 </main>
 </body>
 </html>

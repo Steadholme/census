@@ -69,3 +69,37 @@ CARGO_BUILD_JOBS=2 cargo check --all-targets
 cargo test                 # in-memory flow + unit tests (no database)
 TEST_DATABASE_URL=postgres://… cargo test --test pg_store -- --nocapture   # PG integration
 ```
+
+## Frontend (v2, 2026-09-08)
+
+The directory follows the shared Steadholme v2 system implemented from the Figma
+file `ZyDrJFbfBmd7YiingQ671q` (Census, sky accent). The stylesheet served at
+`/assets/census-20260908.css` is `crates/odyssey`'s canonical layer concatenated
+with this repo's `static/service.css`; bump the date in `src/handlers/mod.rs`
+(`APP_CSS_PATH`) and in `tests/census_flow.rs` together when the CSS changes, so
+the immutable cache entry is invalidated. No page carries an inline `<style>`.
+
+Every page renders through `shell(TEMPLATE, active, theme, email)`, which fills
+`{{THEME_ATTR}}`, `{{COLOR_SCHEME}}`, `{{CSS_PATH}}`, `{{FOOTER}}` and
+`{{APPBAR}}` — in that order, so the one caller-supplied chrome value (the
+signed-in email) is substituted last and can never be re-scanned as a template
+instruction. The theme comes from the `__Secure-theme` cookie via
+`odyssey::resolve_theme`.
+
+The cross-writer DOM contract in `tests/dom_contract.rs` is load-bearing and
+unchanged: the roll keeps `roll`/`roll__row`/`roll__index`, provenance keeps
+`prov prov--*` and `prov-note`, the legend keeps its `aria-label` and the
+sentence "Unmarked rows are enumerated by the identity source.", groups keep
+`members`/`member`/`member__via`/`readonly-note`, and outage/overflow keep
+`alert--down banner` and `bound`/`bound__mark`.
+
+Two deliberate changes came from the design. The directory gained a five-tile
+stat strip (people, groups, departments, provisional marks, newest workforce
+observation) and per-row group chips. The groups grid became a browse surface:
+a card carries the name, counts, description and a member facepile, and every
+membership edit — add, remove, link a child group — now lives only on the group
+page the card links to, instead of being duplicated on both.
+
+Selects reset `appearance` and draw their own caret. Odyssey paints a chevron
+via `background-image`, and a `background` shorthand here resets its
+`background-repeat`, which tiles the arrow under `:root[data-theme="dark"]`.

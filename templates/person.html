@@ -1,56 +1,76 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{{THEME_ATTR}}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="{{COLOR_SCHEME}}">
   <title>{{NAME_TEXT}} · Census</title>
-  <style>{{CSS}}</style>
+  <link rel="stylesheet" href="{{CSS_PATH}}">
 </head>
-<body class="page-reading">
+<body class="page-v2">
 <a class="skip-link" href="#main">Skip to the dossier</a>
-{{TOPBAR}}
-<main class="reader" id="main" tabindex="-1">
-  <a class="back-link" href="/">&larr; All people</a>
+{{APPBAR}}
+<main class="v2-page" id="main" tabindex="-1">
+  <nav class="crumb" aria-label="Breadcrumb">
+    <a class="back-link" href="/">People</a>
+    <span class="crumb__sep" aria-hidden="true">/</span>
+    <span aria-current="page">{{NAME_TEXT}}</span>
+  </nav>
+
   <header class="person__head">
     {{AVATAR}}
     <div class="person__id">
-      <h1 class="person__name">{{NAME}}</h1>
+      <div class="person__nameline">
+        <h1 class="person__name">{{NAME}}</h1>
+        {{PROV_TAG}}
+      </div>
       {{TITLE_LINE}}
       {{EMAIL_LINE}}
       <div class="person__updated">{{UPDATED}}</div>
     </div>
+    <div class="pagehead__actions">{{HEAD_ACTION}}</div>
   </header>
   {{PROVENANCE}}
 
-  <section class="person__section" aria-labelledby="details-h">
-    <h2 class="person__label" id="details-h">Details</h2>
-    <p class="section-note">Self-declared by this person — descriptive text, shown as entered.</p>
-    {{DETAILS}}
-  </section>
+  <div class="two-col">
+    <div class="directory__main">
+      <section class="card person__section" aria-labelledby="details-h">
+        <div class="card__head"><h2 class="person__label" id="details-h">Details</h2></div>
+        {{DETAILS}}
+        <p class="card__caption card__caption--foot">Self-declared by this person — descriptive text, shown as entered.</p>
+      </section>
 
-  <section class="person__section" aria-labelledby="reports-h">
-    <h2 class="person__label" id="reports-h">Direct reports</h2>
-    <p class="section-note">Derived from self-declared manager fields — not a confirmed reporting line.</p>
-    <ul class="chips">
-      {{REPORTS}}
-    </ul>
-  </section>
+      <section class="card person__section" aria-labelledby="bio-h">
+        <div class="card__head"><h2 class="person__label" id="bio-h">Bio</h2></div>
+        <div class="card__pad">{{BIO}}</div>
+      </section>
+    </div>
 
-  <section class="person__section" aria-labelledby="bio-h">
-    <h2 class="person__label" id="bio-h">Bio</h2>
-    {{BIO}}
-  </section>
+    <div class="directory__aside">
+      <section class="card person__section" aria-labelledby="reports-h">
+        <div class="card__head"><h2 class="person__label" id="reports-h">Direct reports</h2><span class="card__count">{{REPORT_COUNT}}</span></div>
+        <div class="card__pad">
+          <ul class="chips">
+            {{REPORTS}}
+          </ul>
+        </div>
+        <p class="card__caption card__caption--foot">Derived from self-declared manager fields.</p>
+      </section>
 
-  <section class="person__section" aria-labelledby="groups-h">
-    <h2 class="person__label" id="groups-h">Groups</h2>
-    <p class="section-note">Membership is curated by any signed-in member; a role is descriptive text, not permission.</p>
-    <ul class="chips">
-      {{GROUPS}}
-    </ul>
-  </section>
+      <section class="card person__section" aria-labelledby="groups-h">
+        <div class="card__head"><h2 class="person__label" id="groups-h">Groups</h2><span class="card__count">{{GROUP_COUNT}}</span></div>
+        <div class="card__pad">
+          <ul class="chips">
+            {{GROUPS}}
+          </ul>
+        </div>
+        <p class="card__caption card__caption--foot">A role is descriptive text, not permission.</p>
+      </section>
+    </div>
+  </div>
 
   {{EDIT}}
+{{FOOTER}}
 </main>
 </body>
 </html>

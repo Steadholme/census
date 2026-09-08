@@ -81,6 +81,7 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
         .route("/readyz", get(handlers::health::readyz))
+        .route(handlers::APP_CSS_PATH, get(handlers::app_css_asset))
         .route("/", get(handlers::people::directory))
         .route("/u/{sub}", get(handlers::people::person))
         .route("/api/profile", post(handlers::people::update_profile))

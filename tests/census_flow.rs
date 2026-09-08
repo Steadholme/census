@@ -16,6 +16,30 @@ use tower::ServiceExt;
 
 const CSRF: &str = "tok_csrf_for_tests";
 
+#[tokio::test]
+async fn stylesheet_is_public_and_immutable() {
+    let response = app(build_dev_state())
+        .oneshot(get("/assets/census-20260908.css"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::X_CONTENT_TYPE_OPTIONS)
+            .unwrap(),
+        "nosniff"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(body.len() > 10_000);
+}
+
 /// A dev state whose directory is seeded with two real Keystone identities.
 fn seeded_state() -> AppState {
     let mut state = build_dev_state();
@@ -43,6 +67,8 @@ async fn directory_and_profile_flow() {
     // --- directory lists the seeded identities -----------------------------
     let (status, body) = call(&state, get("/")).await;
     assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("/assets/census-20260908.css"));
+    assert!(!body.contains("<style>"));
     assert!(
         body.contains("alice@steadholme.local"),
         "alice in directory"
@@ -402,7 +428,12 @@ async fn groups_and_membership_flow() {
         get_auth("/groups", "u_alice", "alice@steadholme.local"),
     )
     .await;
-    assert!(page.contains("maintainer"), "role shown on group page");
+    // The grid is a browse surface: a card carries the facepile and counts, and the member's
+    // role now appears only on the group page the card links to.
+    assert!(
+        page.contains(r#"class="facepile""#),
+        "member facepile shown on the groups grid"
+    );
     assert!(page.contains("Platform"), "child group shown");
     assert!(
         page.contains(r#"<span class="num">1</span> resolved"#),
@@ -420,6 +451,10 @@ async fn groups_and_membership_flow() {
     assert!(detail.contains("Resolved members"));
     assert!(detail.contains("bob@steadholme.local"));
     assert!(detail.contains("Platform"));
+    assert!(
+        detail.contains("maintainer"),
+        "role shown on the group page"
+    );
 
     let (_, filtered) = call(&state, get(&format!("/?group={eng_id}"))).await;
     assert!(

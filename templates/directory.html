@@ -1,50 +1,56 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{{THEME_ATTR}}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="{{COLOR_SCHEME}}">
   <title>Directory · Census · Steadholme</title>
-  <style>{{CSS}}</style>
+  <link rel="stylesheet" href="{{CSS_PATH}}">
 </head>
-<body class="page-reading">
+<body class="page-v2">
 <a class="skip-link" href="#main">Skip to the roll</a>
-{{TOPBAR}}
-<main class="reader reader--wide" id="main" tabindex="-1">
-  <div class="reader__head">
-    <div>
-      <p class="reader__eyebrow">The roll</p>
-      <h1 class="reader__title">People</h1>
-      <p class="reader__sub">The estate's people directory — profiles and groups over identity-source records. Details are self-declared; they carry no rank, sign-off, or reporting authority.</p>
+{{APPBAR}}
+<main class="v2-page" id="main" tabindex="-1">
+  <div class="pagehead">
+    <div class="pagehead__titles">
+      <h1>People</h1>
     </div>
-    <form class="searchbar searchbar--filters" method="get" action="/" role="search" aria-label="Filter the roll">
-      <div class="searchbar__field"><label for="filter-q">Search</label><input id="filter-q" type="search" name="q" value="{{QUERY}}" placeholder="Name, department, group…"></div>
-      <div class="searchbar__field"><label for="filter-dept">Department</label><select id="filter-dept" name="dept">{{DEPARTMENT_OPTIONS}}</select></div>
-      <div class="searchbar__field"><label for="filter-group">Group</label><select id="filter-group" name="group">{{GROUP_OPTIONS}}</select></div>
-      <button class="btn btn-primary" type="submit">Search</button>
-    </form>
   </div>
+
+  <form class="searchbar" method="get" action="/" role="search" aria-label="Filter the roll">
+    <div class="searchbar__field"><label for="filter-q">Search</label><input id="filter-q" type="search" name="q" value="{{QUERY}}" placeholder="Name, department, group…"></div>
+    <div class="searchbar__field"><label for="filter-dept">Department</label><select id="filter-dept" name="dept">{{DEPARTMENT_OPTIONS}}</select></div>
+    <div class="searchbar__field"><label for="filter-group">Group</label><select id="filter-group" name="group">{{GROUP_OPTIONS}}</select></div>
+    <button class="btn btn-primary" type="submit">Search</button>
+  </form>
+
   {{BANNER}}
+  <div class="stats">{{STATS}}</div>
+
   <div class="directory">
     <div class="directory__main">
-      <div class="directory__count">{{COUNT}}</div>
-      {{BOUNDARY}}
-      <ul class="roll">{{ROWS}}</ul>
+      <section class="card roll-card" aria-labelledby="roll-h">
+        <div class="directory__count" id="roll-h">{{COUNT}}</div>
+        {{BOUNDARY}}
+        <ul class="roll">{{ROWS}}</ul>
+        <p class="card__caption card__caption--foot">Titles, departments and bios are self-declared — no rank, sign-off or reporting authority.</p>
+      </section>
     </div>
     <aside class="directory__aside" aria-label="Groups and declared contours">
-      {{LEGEND}}
       <div class="panel">
         <div class="panel__head"><h2>Groups</h2><a class="panel__link" href="/groups">All groups</a></div>
-        <p class="panel__note">Resolved counts include nested groups.</p>
         <ul class="grouplist">{{GROUPS}}</ul>
+        <p class="panel__note">Resolved counts include nested groups.</p>
       </div>
       <div class="panel org-panel">
-        <div class="panel__head"><h2>Declared contours</h2></div>
-        <p class="panel__note">Reporting lines as declared by each person — a derived sketch of the current view, not an authority record.</p>
+        <div class="panel__head"><h2>Declared reporting lines</h2></div>
         <div class="org-chart" role="region" aria-label="Declared contours, scrollable" tabindex="0">{{ORG_CHART}}</div>
+        <p class="panel__note">Self-declared managers · derived, not an authority record.</p>
       </div>
+      {{LEGEND}}
     </aside>
   </div>
+{{FOOTER}}
 </main>
 </body>
 </html>

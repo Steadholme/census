@@ -20,7 +20,7 @@ use crate::config::{MAX_BIO_CHARS, MAX_NAME_CHARS, MAX_TITLE_CHARS, MAX_URL_CHAR
 use crate::directory::{DirectoryError, Identity, IdentityPage};
 use crate::error::{AppError, UnavailableKind};
 use crate::handlers::{
-    app_css, esc, fmt_date, html_with_cookie, initials, redirect, render_template, topbar,
+    esc, fmt_date, html_with_cookie, initials, redirect, render_template, shell, theme_of,
 };
 use crate::markdown;
 use crate::store::{recursive_members_of, Group, Page, Profile, StoreError};
@@ -289,6 +289,11 @@ pub async fn directory(
         Ok(_) => {}
     }
     let roll_unavailable = identity_unavailable || workforce_unavailable;
+    // Newest observation across the workforce authority — the "Workforce sync" stat tile.
+    let workforce_sync = workforce_result
+        .as_ref()
+        .ok()
+        .and_then(|page| page.items.iter().map(|record| record.observed_at).max());
 
     let (people, total, identity_overflow) = match (
         identity_result.ok(),
@@ -406,6 +411,7 @@ pub async fn directory(
             p,
             visible_people.len(),
             viewer.as_ref().map(|item| item.sub.as_str()) == Some(p.identity.sub.as_str()),
+            group_names,
         ));
     }
     if roll_unavailable {
@@ -483,16 +489,27 @@ pub async fn directory(
     };
     let legend = render_legend(&visible_people);
 
-    let topbar = topbar("Directory", &email);
+    let provisional_shown = visible_people
+        .iter()
+        .filter(|person| person.provenance == Provenance::Provisional)
+        .count();
+    let stats = render_stats(
+        roll_unavailable,
+        total,
+        groups_unavailable,
+        groups.len(),
+        departments.len(),
+        provisional_shown,
+        workforce_sync,
+    );
     let query = esc(needle.trim());
     let department_options = render_department_options(&departments, dept_filter.trim());
     let group_options = render_group_options(&groups, &group_filter, groups_unavailable);
     let count = esc(&count_label);
     let body = render_template(
-        DIRECTORY_HTML,
+        &shell(DIRECTORY_HTML, "/", theme_of(&headers), Some(&email)),
         &[
-            ("{{CSS}}", app_css()),
-            ("{{TOPBAR}}", &topbar),
+            ("{{STATS}}", &stats),
             ("{{BANNER}}", &banner),
             ("{{BOUNDARY}}", &boundary),
             ("{{LEGEND}}", &legend),
@@ -629,16 +646,30 @@ pub async fn person(
         String::new()
     };
 
-    let topbar = topbar("Person", &email);
     let name = esc(&label);
     let updated = esc(&updated_sentence(profile.updated_at));
+    let prov_tag = render_prov_tag(provenance);
+    let head_action = if is_self {
+        r##"<a class="btn btn-secondary" href="#edit-profile">Edit profile</a>"##.to_string()
+    } else if identity.email.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<a class="btn btn-secondary" href="mailto:{e}">Email</a>"#,
+            e = esc(&identity.email)
+        )
+    };
+    let report_count = count_chip_items(&reports_html);
+    let group_count = count_chip_items(&group_html);
     let provenance = render_provenance(provenance);
     let page = render_template(
-        PERSON_HTML,
+        &shell(PERSON_HTML, "/", theme_of(&headers), Some(&email)),
         &[
-            ("{{CSS}}", app_css()),
-            ("{{TOPBAR}}", &topbar),
             ("{{NAME_TEXT}}", &name),
+            ("{{PROV_TAG}}", &prov_tag),
+            ("{{HEAD_ACTION}}", &head_action),
+            ("{{REPORT_COUNT}}", &report_count),
+            ("{{GROUP_COUNT}}", &group_count),
             ("{{AVATAR}}", &avatar),
             ("{{NAME}}", &name),
             ("{{TITLE_LINE}}", &title_line),
@@ -793,7 +824,7 @@ pub fn viewer_identity(headers: &HeaderMap) -> Option<Identity> {
 }
 
 /// One ledger row: ordinal, identity, optional profile facts, and exception-only provenance.
-fn render_person_row(p: &Person, ordinal: usize, is_self: bool) -> String {
+fn render_person_row(p: &Person, ordinal: usize, is_self: bool, group_names: &[String]) -> String {
     let label = p.label();
     let avatar = render_avatar(&p.profile.avatar_url, &label, "avatar--sm");
     let title = if p.profile.title.trim().is_empty() {
@@ -839,6 +870,7 @@ fn render_person_row(p: &Person, ordinal: usize, is_self: bool) -> String {
         ""
     };
     let provenance = render_prov_tag(p.provenance);
+    let groups = render_roll_groups(group_names);
     format!(
         r#"<li class="roll__row">
   <a class="roll__entry" href="/u/{sub}">
@@ -850,6 +882,7 @@ fn render_person_row(p: &Person, ordinal: usize, is_self: bool) -> String {
     {meta}
     {bio}
   </span>
+  {groups}
   </a>
 </li>"#,
         sub = esc(&p.identity.sub),
@@ -862,7 +895,33 @@ fn render_person_row(p: &Person, ordinal: usize, is_self: bool) -> String {
         email = email,
         meta = meta,
         bio = bio,
+        groups = groups,
     )
+}
+
+/// The group chips shown at the right of a roll row. Names only — a membership is descriptive,
+/// so no count or role is repeated here. Beyond four chips the row states the remainder instead
+/// of growing without bound.
+fn render_roll_groups(group_names: &[String]) -> String {
+    if group_names.is_empty() {
+        return String::new();
+    }
+    const SHOWN: usize = 4;
+    let mut html = String::from(r#"<span class="roll__groups">"#);
+    for name in group_names.iter().take(SHOWN) {
+        html.push_str(&format!(
+            r#"<span class="gchip">{}</span>"#,
+            esc(&cap(name, 28))
+        ));
+    }
+    if group_names.len() > SHOWN {
+        html.push_str(&format!(
+            r#"<span class="gchip gchip--more">+{}</span>"#,
+            group_names.len() - SHOWN
+        ));
+    }
+    html.push_str("</span>");
+    html
 }
 
 /// Escape directory metadata while adding copy-transparent wrap opportunities to hostile long
@@ -919,6 +978,64 @@ fn render_avatar(avatar_url: &str, label: &str, size_class: &str) -> String {
             init = esc(&initials(label)),
         ),
     }
+}
+
+/// The five directory stat tiles: roll size, groups, departments, provisional marks, sync stamp.
+///
+/// Every tile is a name over a value; a withheld source renders an em dash rather than a zero, so
+/// an outage never reads as an empty estate.
+fn render_stats(
+    roll_unavailable: bool,
+    total: usize,
+    groups_unavailable: bool,
+    group_count: usize,
+    department_count: usize,
+    provisional: usize,
+    workforce_sync: Option<i64>,
+) -> String {
+    let dash = "—".to_string();
+    let people_value = if roll_unavailable {
+        dash.clone()
+    } else {
+        format_count(total)
+    };
+    let (groups_value, departments_value) = if groups_unavailable {
+        (dash.clone(), format_count(department_count))
+    } else {
+        (format_count(group_count), format_count(department_count))
+    };
+    let sync_value = match workforce_sync {
+        Some(observed) if observed > 0 => fmt_date(observed),
+        _ => dash.clone(),
+    };
+    let mut html = String::new();
+    for (value, label, marked, mono) in [
+        (people_value, "People", false, false),
+        (groups_value, "Groups", false, false),
+        (departments_value, "Departments", false, false),
+        (
+            format_count(provisional),
+            "Provisional",
+            provisional > 0,
+            false,
+        ),
+        (sync_value, "Workforce sync", false, true),
+    ] {
+        html.push_str(&format!(
+            r#"<div class="stat-tile{mark}"><div class="stat-tile__value{mono}">{value}</div><div class="stat-tile__label">{label}</div></div>"#,
+            mark = if marked { " stat-tile--mark" } else { "" },
+            mono = if mono { " mono" } else { "" },
+            value = esc(&value),
+            label = esc(label),
+        ));
+    }
+    html
+}
+
+/// Count the rendered `chips__item` entries so a card head can carry the number. An empty-state
+/// fragment (`chips__empty`) counts as zero.
+fn count_chip_items(html: &str) -> String {
+    format_count(html.matches(r#"<li class="chips__item">"#).count())
 }
 
 fn render_prov_tag(provenance: Provenance) -> String {
@@ -1300,7 +1417,7 @@ fn render_edit_form(csrf: &str, profile: &Profile, people: &[Person]) -> String 
     let manager_options = render_manager_options(people, profile);
     let locale_options = render_locale_options(&profile.locale);
     format!(
-        r#"<section class="card edit-card">
+        r#"<section class="card edit-card" id="edit-profile">
   <div class="card__body">
     <h2 class="edit-card__head">Edit your profile</h2>
     <form class="editor" method="post" action="/api/profile">
@@ -1488,7 +1605,7 @@ mod roll_meta_tests {
             provenance: Provenance::Enumerated,
         };
 
-        let row = render_person_row(&person, 1, false);
+        let row = render_person_row(&person, 1, false, &[]);
         let meta = row
             .split_once(r#"<span class="roll__meta">"#)
             .and_then(|(_, tail)| tail.split_once("</span>"))
