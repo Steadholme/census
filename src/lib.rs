@@ -36,6 +36,7 @@ pub mod config;
 pub mod directory;
 pub mod error;
 pub mod fixtures;
+pub mod gateway_observe;
 pub mod handlers;
 pub mod markdown;
 pub mod store;
@@ -106,6 +107,12 @@ pub fn app(state: AppState) -> Router {
             "/internal/v1/workforce/changes",
             get(handlers::workforce::changes),
         )
+        // OBSERVATION ONLY — rejects nothing. Records which callers arrive without a gateway
+        // signature so the exempt list is derived from production traffic rather than guessed,
+        // before identity verification is switched on (2026-09-14 audit, finding A).
+        .layer(axum::middleware::from_fn(
+            gateway_observe::observe_gateway_identity,
+        ))
         .with_state(state)
         .layer(from_fn(private_no_store))
 }
